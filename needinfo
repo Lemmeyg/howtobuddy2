@@ -1,0 +1,24 @@
+# Required Information for API Setup
+
+## AssemblyAI
+1. AssemblyAI API Key
+   - Please provide your AssemblyAI API key
+   - This will be stored in environment variables
+
+## OpenAI (for later)
+1. OpenAI API Key
+   - Will be needed for document generation
+   - This will be stored in environment variables
+
+## Supabase (for later)
+1. Supabase Project URL
+2. Supabase Project API Key
+3. Supabase Project Anon Key
+
+## Environment Variables
+We'll need to set up the following environment variables:
+- ASSEMBLYAI_API_KEY
+- OPENAI_API_KEY (later)
+- SUPABASE_URL (later)
+- SUPABASE_SERVICE_KEY (later)
+- SUPABASE_ANON_KEY (later) 
