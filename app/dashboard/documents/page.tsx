@@ -1,12 +1,12 @@
 import { Suspense } from "react";
 import { DocumentList } from "@/components/dashboard/document-list";
-import { createClient } from "@/lib/supabase/server";
+import { createSupabaseClient } from "../../../lib/supabase/server";
 import { logInfo } from "@/lib/logger";
 
 export const dynamic = "force-dynamic";
 
 async function getDocuments() {
-  const supabase = createClient();
+  const supabase = createSupabaseClient();
   const { data: { session } } = await supabase.auth.getSession();
 
   if (!session) {

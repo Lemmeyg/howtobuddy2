@@ -45,7 +45,7 @@ export default function LoginPage() {
       });
 
       // Redirect to the original destination or dashboard
-      const redirectTo = searchParams.get("redirect") || "/dashboard";
+      const redirectTo = searchParams.get("redirectTo") || "/dashboard";
       console.log("Redirecting to:", redirectTo);
       router.push(redirectTo);
     } catch (error: any) {
