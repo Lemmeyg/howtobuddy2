@@ -1,32 +1,97 @@
-import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
-import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { createClient } from "@/lib/supabase/server";
+import { logRequest, logResponse } from "@/lib/logger";
+import { z } from "zod";
 
-export async function GET() {
+const querySchema = z.object({
+  status: z.enum(["all", "processing", "completed", "error"]).optional(),
+  page: z.string().transform(Number).optional(),
+  limit: z.string().transform(Number).optional(),
+  search: z.string().optional(),
+  sortBy: z.enum(["created_at", "title", "video_title"]).optional(),
+  sortOrder: z.enum(["asc", "desc"]).optional(),
+});
+
+export async function GET(request: Request) {
+  const startTime = Date.now();
+  const supabase = createClient();
+
   try {
-    const supabase = createRouteHandlerClient({ cookies });
-    const { data: { session } } = await supabase.auth.getSession();
+    // Get user session
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError || !session) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
 
-    if (!session) {
-      return NextResponse.json(
-        { error: "Unauthorized" },
-        { status: 401 }
+    // Parse and validate query parameters
+    const { searchParams } = new URL(request.url);
+    const query = querySchema.parse(Object.fromEntries(searchParams));
+
+    // Build query
+    let queryBuilder = supabase
+      .from("documents")
+      .select("*")
+      .eq("user_id", session.user.id);
+
+    // Apply search if specified
+    if (query.search) {
+      queryBuilder = queryBuilder.or(
+        `title.ilike.%${query.search}%,video_title.ilike.%${query.search}%`
       );
     }
 
-    const { data: documents, error } = await supabase
-      .from("documents")
-      .select("*")
-      .eq("user_id", session.user.id)
-      .order("created_at", { ascending: false });
+    // Apply status filter if specified
+    if (query.status && query.status !== "all") {
+      queryBuilder = queryBuilder.eq("status", query.status);
+    }
 
-    if (error) throw error;
+    // Apply sorting
+    const sortBy = query.sortBy || "created_at";
+    const sortOrder = query.sortOrder || "desc";
+    queryBuilder = queryBuilder.order(sortBy, { ascending: sortOrder === "asc" });
 
-    return NextResponse.json({ documents });
+    // Apply pagination
+    const page = query.page || 1;
+    const limit = query.limit || 10;
+    const start = (page - 1) * limit;
+    const end = start + limit - 1;
+
+    queryBuilder = queryBuilder.range(start, end);
+
+    // Execute query
+    const { data: documents, error, count } = await queryBuilder;
+
+    if (error) {
+      throw error;
+    }
+
+    const duration = Date.now() - startTime;
+    logResponse(new Response(JSON.stringify(documents)), duration, {
+      userId: session.user.id,
+      path: "/api/documents",
+      method: "GET",
+      status: 200,
+    });
+
+    return NextResponse.json({
+      documents,
+      pagination: {
+        page,
+        limit,
+        total: count || documents.length,
+      },
+    });
   } catch (error) {
-    console.error("Error fetching documents:", error);
+    const duration = Date.now() - startTime;
+    logResponse(new Response(JSON.stringify({ error: "Internal Server Error" })), duration, {
+      path: "/api/documents",
+      method: "GET",
+      status: 500,
+      error,
+    });
+
     return NextResponse.json(
-      { error: "Failed to fetch documents" },
+      { error: "Internal Server Error" },
       { status: 500 }
     );
   }

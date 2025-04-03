@@ -4,6 +4,9 @@ const ASSEMBLYAI_API_KEY = process.env.ASSEMBLYAI_API_KEY;
 const ASSEMBLYAI_API_URL = "https://api.assemblyai.com/v2";
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000; // 1 second
+const POLLING_INTERVAL = 5000; // 5 seconds
+const MAX_POLLING_TIME = 300000; // 5 minutes
+const MAX_POLLING_ATTEMPTS = MAX_POLLING_TIME / POLLING_INTERVAL;
 
 if (!ASSEMBLYAI_API_KEY) {
   throw new Error("ASSEMBLYAI_API_KEY is not set in environment variables");
@@ -31,6 +34,8 @@ async function fetchWithRetry(
 }
 
 export async function submitTranscriptRequest(videoUrl: string): Promise<{ id: string }> {
+  const webhookUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/transcribe/webhook`;
+  
   const response = await fetchWithRetry(`${ASSEMBLYAI_API_URL}/transcript`, {
     method: "POST",
     headers: {
@@ -42,6 +47,9 @@ export async function submitTranscriptRequest(videoUrl: string): Promise<{ id: s
       language_code: "en",
       punctuate: true,
       format_text: true,
+      webhook_url: webhookUrl,
+      webhook_auth_header_name: "X-Webhook-Auth",
+      webhook_auth_header_value: process.env.WEBHOOK_SECRET,
     }),
   });
 
@@ -132,4 +140,28 @@ function parseDuration(duration: string): number {
     (parseInt(minutes) || 0) * 60 +
     (parseInt(seconds) || 0)
   );
+}
+
+export async function pollTranscriptStatus(
+  transcriptId: string,
+  onProgress?: (status: AssemblyAITranscriptResponse) => void
+): Promise<AssemblyAITranscriptResponse> {
+  let attempts = 0;
+  
+  while (attempts < MAX_POLLING_ATTEMPTS) {
+    const status = await getTranscriptStatus(transcriptId);
+    
+    if (onProgress) {
+      onProgress(status);
+    }
+
+    if (status.status === "completed" || status.status === "error") {
+      return status;
+    }
+
+    await delay(POLLING_INTERVAL);
+    attempts++;
+  }
+
+  throw new Error("Transcription polling timed out");
 } 

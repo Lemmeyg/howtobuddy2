@@ -1,5 +1,7 @@
 import OpenAI from "openai";
 import { RateLimiter } from "limiter";
+import { logInfo } from "./logger";
+import { withRetry } from "./error-handling";
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 const MAX_REQUESTS_PER_MINUTE = 60; // OpenAI's rate limit
@@ -17,6 +19,39 @@ const limiter = new RateLimiter({
   tokensPerInterval: MAX_REQUESTS_PER_MINUTE,
   interval: "minute",
 });
+
+// Cost per 1K tokens (as of March 2024)
+const COST_PER_1K_TOKENS = {
+  "gpt-3.5-turbo": {
+    input: 0.0005,
+    output: 0.0015,
+  },
+  "gpt-4": {
+    input: 0.03,
+    output: 0.06,
+  },
+};
+
+interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  cost: number;
+}
+
+function calculateCost(
+  model: string,
+  promptTokens: number,
+  completionTokens: number
+): number {
+  const costs = COST_PER_1K_TOKENS[model as keyof typeof COST_PER_1K_TOKENS];
+  if (!costs) return 0;
+
+  const inputCost = (promptTokens / 1000) * costs.input;
+  const outputCost = (completionTokens / 1000) * costs.output;
+
+  return inputCost + outputCost;
+}
 
 async function makeRateLimitedRequest<T>(
   requestFn: () => Promise<T>
@@ -49,7 +84,7 @@ export interface TopicExtractionResult {
 export async function generateSummary(
   text: string,
   options: SummaryOptions = {}
-): Promise<string> {
+): Promise<{ summary: string; usage: TokenUsage }> {
   const {
     maxLength = 200,
     format = "paragraph",
@@ -65,26 +100,58 @@ export async function generateSummary(
   ${text}`;
 
   try {
-    const completion = await openai.chat.completions.create({
+    const completion = await withRetry(() =>
+      makeRateLimitedRequest(() =>
+        openai.chat.completions.create({
+          model: "gpt-3.5-turbo",
+          messages: [
+            {
+              role: "system",
+              content: "You are a helpful assistant that creates concise, accurate summaries.",
+            },
+            {
+              role: "user",
+              content: prompt,
+            },
+          ],
+          temperature: 0.3,
+          max_tokens: 500,
+        })
+      )
+    );
+
+    const usage = completion.usage;
+    const cost = calculateCost(
+      "gpt-3.5-turbo",
+      usage.prompt_tokens,
+      usage.completion_tokens
+    );
+
+    logInfo("OpenAI API call", {
       model: "gpt-3.5-turbo",
-      messages: [
-        {
-          role: "system",
-          content: "You are a helpful assistant that creates concise, accurate summaries.",
-        },
-        {
-          role: "user",
-          content: prompt,
-        },
-      ],
-      temperature: 0.3,
-      max_tokens: 500,
+      operation: "generateSummary",
+      promptTokens: usage.prompt_tokens,
+      completionTokens: usage.completion_tokens,
+      totalTokens: usage.total_tokens,
+      cost,
     });
 
-    return completion.choices[0].message.content || "Failed to generate summary.";
+    return {
+      summary: completion.choices[0].message.content || "Failed to generate summary.",
+      usage: {
+        promptTokens: usage.prompt_tokens,
+        completionTokens: usage.completion_tokens,
+        totalTokens: usage.total_tokens,
+        cost,
+      },
+    };
   } catch (error) {
-    console.error("OpenAI API error:", error);
-    throw new Error("Failed to generate summary. Please try again later.");
+    logError("OpenAI API error", {
+      error,
+      operation: "generateSummary",
+      model: "gpt-3.5-turbo",
+    });
+    throw error;
   }
 }
 
