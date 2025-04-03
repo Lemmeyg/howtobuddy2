@@ -1,15 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import Link from "next/link";
 import { useToast } from "@/components/ui/use-toast";
 import { z } from "zod";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
-const registerSchema = z.object({
-  email: z.string().email("Please enter a valid email address"),
+const updatePasswordSchema = z.object({
   password: z
     .string()
     .min(8, "Password must be at least 8 characters")
@@ -23,8 +22,7 @@ const registerSchema = z.object({
   path: ["confirmPassword"],
 });
 
-export default function RegisterPage() {
-  const [email, setEmail] = useState("");
+export default function UpdatePasswordPage() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -33,6 +31,20 @@ export default function RegisterPage() {
   
   const router = useRouter();
   const { toast } = useToast();
+  const supabase = createClientComponentClient();
+
+  useEffect(() => {
+    // Check if we have a session
+    const checkSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        // If no session, redirect to login
+        router.push("/login");
+      }
+    };
+
+    checkSession();
+  }, [router, supabase.auth]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -42,52 +54,38 @@ export default function RegisterPage() {
 
     try {
       // Validate form data
-      const result = registerSchema.safeParse({ email, password, confirmPassword });
+      const result = updatePasswordSchema.safeParse({ password, confirmPassword });
       if (!result.success) {
         const errors: Record<string, string> = {};
         result.error.issues.forEach((issue) => {
           errors[issue.path[0]] = issue.message;
         });
         setValidationErrors(errors);
-        setIsLoading(false);
         return;
       }
 
-      const response = await fetch("/api/auth/register", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ email, password }),
+      const { error } = await supabase.auth.updateUser({
+        password: password
       });
 
-      let data;
-      try {
-        data = await response.json();
-      } catch (e) {
-        throw new Error("Failed to parse server response");
-      }
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to register");
+      if (error) {
+        throw error;
       }
 
       toast({
-        title: "Registration successful!",
-        description: "Please check your email to verify your account.",
+        title: "Password updated",
+        description: "Your password has been updated successfully.",
       });
 
-      // Redirect to login page after a short delay
-      setTimeout(() => {
-        router.push("/login");
-      }, 2000);
+      // Redirect to dashboard
+      router.push("/dashboard");
     } catch (error: any) {
-      console.error("Registration error:", error);
-      setError(error.message || "Failed to register");
+      console.error("Update password error:", error);
+      setError(error.message || "Failed to update password");
       toast({
         variant: "destructive",
         title: "Error",
-        description: error.message || "Failed to register",
+        description: error.message || "Failed to update password",
       });
     } finally {
       setIsLoading(false);
@@ -99,10 +97,10 @@ export default function RegisterPage() {
       <div className="mx-auto flex w-full flex-col justify-center space-y-6 sm:w-[350px]">
         <div className="flex flex-col space-y-2 text-center">
           <h1 className="text-2xl font-semibold tracking-tight">
-            Create an account
+            Set new password
           </h1>
           <p className="text-sm text-muted-foreground">
-            Enter your email below to create your account
+            Enter your new password below
           </p>
         </div>
 
@@ -115,24 +113,9 @@ export default function RegisterPage() {
           
           <div className="space-y-2">
             <Input
-              id="email"
-              type="email"
-              placeholder="name@example.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              required
-              disabled={isLoading}
-            />
-            {validationErrors.email && (
-              <p className="text-sm text-red-500">{validationErrors.email}</p>
-            )}
-          </div>
-          
-          <div className="space-y-2">
-            <Input
               id="password"
               type="password"
-              placeholder="Create a password"
+              placeholder="Enter new password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
@@ -147,7 +130,7 @@ export default function RegisterPage() {
             <Input
               id="confirmPassword"
               type="password"
-              placeholder="Confirm your password"
+              placeholder="Confirm new password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               required
@@ -163,21 +146,9 @@ export default function RegisterPage() {
             className="w-full" 
             disabled={isLoading}
           >
-            {isLoading ? "Creating account..." : "Create account"}
+            {isLoading ? "Updating password..." : "Update password"}
           </Button>
         </form>
-        
-        <div className="text-center">
-          <p className="text-sm text-muted-foreground">
-            Already have an account?{" "}
-            <Link 
-              href="/login" 
-              className="underline hover:text-primary"
-            >
-              Sign in
-            </Link>
-          </p>
-        </div>
       </div>
     </div>
   );

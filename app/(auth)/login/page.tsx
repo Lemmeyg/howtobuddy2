@@ -1,11 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import Link from "next/link";
 import { useToast } from "@/components/ui/use-toast";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -16,6 +17,19 @@ export default function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { toast } = useToast();
+  const supabase = createClientComponentClient();
+
+  // Check for existing session on mount
+  useEffect(() => {
+    const checkSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (session) {
+        const redirectTo = searchParams.get("redirectTo") || "/dashboard";
+        router.push(redirectTo);
+      }
+    };
+    checkSession();
+  }, []);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -39,6 +53,12 @@ export default function LoginPage() {
         throw new Error(data.error || "Failed to sign in");
       }
 
+      // Update the client-side session
+      await supabase.auth.setSession({
+        access_token: data.session.access_token,
+        refresh_token: data.session.refresh_token,
+      });
+
       toast({
         title: "Success!",
         description: "You have been signed in successfully.",
@@ -48,6 +68,7 @@ export default function LoginPage() {
       const redirectTo = searchParams.get("redirectTo") || "/dashboard";
       console.log("Redirecting to:", redirectTo);
       router.push(redirectTo);
+      router.refresh(); // Refresh to ensure server components re-render
     } catch (error: any) {
       console.error("Login error:", error);
       setError(error.message || "Failed to sign in");

@@ -32,8 +32,25 @@ export async function POST(request: Request) {
       );
     }
 
+    // Create a response with the session
+    const response = NextResponse.json({ 
+      user: data.user,
+      session: data.session 
+    });
+
+    // Set the auth cookie
+    const authCookie = cookies().get('sb-access-token');
+    if (authCookie) {
+      response.cookies.set('sb-access-token', authCookie.value, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'lax',
+        path: '/'
+      });
+    }
+
     console.log("Login successful for user:", data.user?.email);
-    return NextResponse.json({ user: data.user });
+    return response;
   } catch (error) {
     console.error("Unexpected error during login:", error);
     return NextResponse.json(
