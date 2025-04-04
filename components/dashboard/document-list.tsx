@@ -12,28 +12,26 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { logInfo } from "@/lib/logger";
 import { useDebounce } from "@/hooks/use-debounce";
 import Link from "next/link";
-import { FileText, Clock, AlertCircle } from "lucide-react";
+import { FileText, Clock, AlertCircle, Plus } from "lucide-react";
 import { DocumentActions } from "@/components/document/document-actions";
 import { DocumentFilters } from "@/components/document/document-filters";
-
-interface Document {
-  id: string;
-  title: string;
-  status: "processing" | "completed" | "error";
-  created_at: string;
-  updated_at: string;
-  content?: string;
-}
+import { Document } from "@/types/documents";
+import { ProcessingStatus } from "./processing-status";
 
 interface DocumentListProps {
   documents: Document[];
   isLoading?: boolean;
+  emptyMessage?: string;
 }
 
 type SortBy = "created_at" | "title" | "video_title";
 type SortOrder = "asc" | "desc";
 
-export function DocumentList({ documents: initialDocuments, isLoading = false }: DocumentListProps) {
+export function DocumentList({ 
+  documents: initialDocuments, 
+  isLoading = false,
+  emptyMessage = "Get started by creating your first document"
+}: DocumentListProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [documents, setDocuments] = useState(initialDocuments);
@@ -136,12 +134,14 @@ export function DocumentList({ documents: initialDocuments, isLoading = false }:
 
   if (!documents?.length) {
     return (
-      <div className="text-center py-12 border rounded-lg">
-        <FileText className="h-12 w-12 mx-auto text-muted-foreground" />
-        <h3 className="mt-4 text-lg font-semibold">No documents</h3>
-        <p className="text-sm text-muted-foreground">
-          Get started by creating your first document
-        </p>
+      <div className="flex flex-col items-center justify-center py-12 text-center">
+        <p className="text-muted-foreground mb-4">{emptyMessage}</p>
+        <Button asChild>
+          <Link href="/documents/new">
+            <Plus className="mr-2 h-4 w-4" />
+            Create Document
+          </Link>
+        </Button>
       </div>
     );
   }
@@ -178,28 +178,25 @@ export function DocumentList({ documents: initialDocuments, isLoading = false }:
 
       <div className="space-y-4">
         {documents.map((document) => (
-          <div
-            key={document.id}
-            className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors"
-          >
-            <div className="min-w-0 flex-1">
-              <Link
-                href={`/dashboard/documents/${document.id}`}
-                className="block hover:underline font-medium truncate"
-              >
-                {document.title}
-              </Link>
-              <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground">
-                <span>
-                  Updated {formatDistanceToNow(new Date(document.updated_at), { addSuffix: true })}
-                </span>
-                <StatusBadge status={document.status} />
+          <Card key={document.id} className="p-4">
+            <div className="flex items-start justify-between">
+              <div className="space-y-1">
+                <h3 className="font-medium">{document.title}</h3>
+                <p className="text-sm text-muted-foreground">
+                  {new Date(document.created_at).toLocaleDateString()}
+                </p>
               </div>
+              <Button variant="ghost" size="sm" asChild>
+                <Link href={`/documents/${document.id}`}>View</Link>
+              </Button>
             </div>
-            <div className="ml-4">
-              <DocumentActions document={document} />
-            </div>
-          </div>
+            <ProcessingStatus
+              status={document.status}
+              progress={document.status === "processing" ? 50 : undefined}
+              errorMessage={document.error_message}
+              className="mt-4"
+            />
+          </Card>
         ))}
       </div>
 

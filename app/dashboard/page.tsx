@@ -2,10 +2,12 @@ import { Suspense } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DocumentList } from "@/components/dashboard/document-list";
 import { createSupabaseServer } from "@/lib/supabase/server";
-import { FileText, Clock, AlertCircle } from "lucide-react";
+import { FileText, Clock, AlertCircle, Plus, Upload, History } from "lucide-react";
 import { redirect } from "next/navigation";
 import { cookies } from 'next/headers';
 import DashboardError from "@/components/dashboard/error-boundary";
+import { Button } from "@/components/ui/button";
+import Link from "next/link";
 
 async function getStats() {
   console.log('📊 Dashboard: Starting getStats');
@@ -79,11 +81,70 @@ export default async function DashboardPage() {
 
   return (
     <div className="space-y-8">
-      <div>
-        <h2 className="text-3xl font-bold tracking-tight">Dashboard</h2>
-        <p className="text-muted-foreground">
-          Welcome back! Here's an overview of your documents.
-        </p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h2 className="text-3xl font-bold tracking-tight">Dashboard</h2>
+          <p className="text-muted-foreground">
+            Welcome back! Here's an overview of your documents.
+          </p>
+        </div>
+        <Button asChild size="lg">
+          <Link href="/documents/new">
+            <Plus className="mr-2 h-5 w-5" />
+            New Document
+          </Link>
+        </Button>
+      </div>
+
+      {/* Quick Actions */}
+      <div className="grid gap-4 md:grid-cols-3">
+        <Card className="hover:bg-muted/50 transition-colors cursor-pointer">
+          <Link href="/documents/new">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">
+                Create Document
+              </CardTitle>
+              <Plus className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">
+                Start a new document from a video or template
+              </p>
+            </CardContent>
+          </Link>
+        </Card>
+
+        <Card className="hover:bg-muted/50 transition-colors cursor-pointer">
+          <Link href="/documents/upload">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">
+                Upload Video
+              </CardTitle>
+              <Upload className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">
+                Upload a video file or paste a URL
+              </p>
+            </CardContent>
+          </Link>
+        </Card>
+
+        <Card className="hover:bg-muted/50 transition-colors cursor-pointer">
+          <Link href="/documents">
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">
+                View All Documents
+              </CardTitle>
+              <History className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground">
+                Browse and manage all your documents
+              </p>
+            </CardContent>
+          </Link>
+        </Card>
       </div>
 
       {/* Stats Cards */}
@@ -97,6 +158,9 @@ export default async function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{stats.totalDocuments}</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {stats.totalDocuments === 0 ? "No documents yet" : "Documents created"}
+            </p>
           </CardContent>
         </Card>
 
@@ -109,6 +173,9 @@ export default async function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{stats.processingDocuments}</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {stats.processingDocuments === 0 ? "No active processing" : "Documents being processed"}
+            </p>
           </CardContent>
         </Card>
 
@@ -121,15 +188,28 @@ export default async function DashboardPage() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{stats.errorDocuments}</div>
+            <p className="text-xs text-muted-foreground mt-1">
+              {stats.errorDocuments === 0 ? "No errors found" : "Documents with errors"}
+            </p>
           </CardContent>
         </Card>
       </div>
 
       {/* Recent Documents */}
       <div className="space-y-4">
-        <h3 className="text-xl font-semibold">Recent Documents</h3>
+        <div className="flex items-center justify-between">
+          <h3 className="text-xl font-semibold">Recent Documents</h3>
+          {stats.totalDocuments > 0 && (
+            <Button variant="outline" asChild>
+              <Link href="/documents">View All</Link>
+            </Button>
+          )}
+        </div>
         <Suspense fallback={<DocumentList documents={[]} isLoading />}>
-          <DocumentList documents={stats.recentDocuments} />
+          <DocumentList 
+            documents={stats.recentDocuments} 
+            emptyMessage="No documents yet. Create your first document to get started!"
+          />
         </Suspense>
       </div>
     </div>

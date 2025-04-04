@@ -4,7 +4,6 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useToast } from "@/components/ui/use-toast";
 import { z } from "zod";
 import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 
@@ -22,6 +21,13 @@ const updatePasswordSchema = z.object({
   path: ["confirmPassword"],
 });
 
+const passwordRequirements = [
+  "At least 8 characters",
+  "At least one uppercase letter",
+  "At least one lowercase letter",
+  "At least one number",
+];
+
 export default function UpdatePasswordPage() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -30,16 +36,22 @@ export default function UpdatePasswordPage() {
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
   
   const router = useRouter();
-  const { toast } = useToast();
   const supabase = createClientComponentClient();
 
   useEffect(() => {
     // Check if we have a session
     const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session }, error } = await supabase.auth.getSession();
+      
+      if (error) {
+        console.error("Session check error:", error);
+        router.push("/login?error=invalid_reset_link");
+        return;
+      }
+
       if (!session) {
-        // If no session, redirect to login
-        router.push("/login");
+        console.log("No session found, redirecting to login");
+        router.push("/login?error=invalid_reset_link");
       }
     };
 
@@ -61,6 +73,7 @@ export default function UpdatePasswordPage() {
           errors[issue.path[0]] = issue.message;
         });
         setValidationErrors(errors);
+        setIsLoading(false);
         return;
       }
 
@@ -72,21 +85,17 @@ export default function UpdatePasswordPage() {
         throw error;
       }
 
-      toast({
-        title: "Password updated",
-        description: "Your password has been updated successfully.",
-      });
+      console.log("Password updated successfully");
+      
+      // Sign out the user to ensure they log in with new password
+      await supabase.auth.signOut();
+      
+      // Redirect to login with success message
+      router.push("/login?message=password_updated");
 
-      // Redirect to dashboard
-      router.push("/dashboard");
     } catch (error: any) {
       console.error("Update password error:", error);
       setError(error.message || "Failed to update password");
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: error.message || "Failed to update password",
-      });
     } finally {
       setIsLoading(false);
     }
@@ -114,12 +123,15 @@ export default function UpdatePasswordPage() {
           <div className="space-y-2">
             <Input
               id="password"
+              name="new-password"
               type="password"
               placeholder="Enter new password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
               disabled={isLoading}
+              autoComplete="new-password"
+              className="w-full"
             />
             {validationErrors.password && (
               <p className="text-sm text-red-500">{validationErrors.password}</p>
@@ -129,16 +141,28 @@ export default function UpdatePasswordPage() {
           <div className="space-y-2">
             <Input
               id="confirmPassword"
+              name="new-password-confirm"
               type="password"
               placeholder="Confirm new password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
               required
               disabled={isLoading}
+              autoComplete="new-password"
+              className="w-full"
             />
             {validationErrors.confirmPassword && (
               <p className="text-sm text-red-500">{validationErrors.confirmPassword}</p>
             )}
+          </div>
+
+          <div className="space-y-1 text-sm text-muted-foreground">
+            <p className="font-medium">Password requirements:</p>
+            <ul className="list-disc pl-4 space-y-1">
+              {passwordRequirements.map((req, index) => (
+                <li key={index}>{req}</li>
+              ))}
+            </ul>
           </div>
           
           <Button 
@@ -147,6 +171,15 @@ export default function UpdatePasswordPage() {
             disabled={isLoading}
           >
             {isLoading ? "Updating password..." : "Update password"}
+          </Button>
+
+          <Button
+            type="button"
+            variant="ghost"
+            className="w-full"
+            onClick={() => router.push("/login")}
+          >
+            Back to login
           </Button>
         </form>
       </div>

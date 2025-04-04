@@ -1,65 +1,129 @@
+import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
+import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
-import { logRequest, logResponse } from "@/lib/logger";
-import { z } from "zod";
-import { BackgroundProcessor } from "@/lib/background-processor";
-
-const requestSchema = z.object({
-  documentId: z.string().uuid(),
-  videoUrl: z.string().url(),
-});
+import { processVideo } from "@/lib/video-processing";
+import { logError, logInfo } from "@/lib/logger";
 
 export async function POST(request: Request) {
-  const startTime = Date.now();
-  const supabase = createClient();
-
   try {
-    // Get user session
+    const supabase = createRouteHandlerClient({ cookies });
+
+    // Verify session
     const { data: { session }, error: sessionError } = await supabase.auth.getSession();
     if (sessionError || !session) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 401 }
+      );
     }
 
-    // Parse and validate request body
-    const body = await request.json();
-    const { documentId, videoUrl } = requestSchema.parse(body);
+    // Get document ID from request
+    const { documentId } = await request.json();
+    if (!documentId) {
+      return NextResponse.json(
+        { error: "Document ID is required" },
+        { status: 400 }
+      );
+    }
 
-    // Verify document ownership
-    const { data: document, error: documentError } = await supabase
+    // Get document details
+    const { data: document, error: fetchError } = await supabase
       .from("documents")
-      .select("id")
+      .select("*")
       .eq("id", documentId)
       .eq("user_id", session.user.id)
       .single();
 
-    if (documentError || !document) {
-      return NextResponse.json({ error: "Document not found" }, { status: 404 });
+    if (fetchError || !document) {
+      logError("Error fetching document", { documentId, error: fetchError });
+      return NextResponse.json(
+        { error: "Document not found" },
+        { status: 404 }
+      );
     }
 
-    // Submit processing job
-    const processor = BackgroundProcessor.getInstance();
-    const job = await processor.submitJob(documentId, videoUrl);
+    // Update document status to processing
+    const { error: updateError } = await supabase
+      .from("documents")
+      .update({ status: "processing" })
+      .eq("id", documentId);
 
-    const duration = Date.now() - startTime;
-    logResponse(new Response(JSON.stringify(job)), duration, {
-      userId: session.user.id,
-      path: "/api/documents/process",
-      method: "POST",
-      status: 200,
-    });
+    if (updateError) {
+      logError("Error updating document status", { documentId, error: updateError });
+      return NextResponse.json(
+        { error: "Failed to update document status" },
+        { status: 500 }
+      );
+    }
 
-    return NextResponse.json(job);
+    try {
+      // Process video
+      const result = await processVideo({
+        videoUrl: document.video_url,
+        skillLevel: document.metadata?.skillLevel,
+        outputType: document.metadata?.outputType,
+      });
+
+      if (result.error) {
+        // Update document with error
+        await supabase
+          .from("documents")
+          .update({
+            status: "error",
+            error_message: result.error,
+          })
+          .eq("id", documentId);
+
+        return NextResponse.json(
+          { error: result.error },
+          { status: 500 }
+        );
+      }
+
+      // Update document with processed content
+      const { error: finalUpdateError } = await supabase
+        .from("documents")
+        .update({
+          content: result.content,
+          metadata: {
+            ...document.metadata,
+            ...result.metadata,
+          },
+          status: "completed",
+          completed_at: new Date().toISOString(),
+        })
+        .eq("id", documentId);
+
+      if (finalUpdateError) {
+        logError("Error updating document with processed content", { documentId, error: finalUpdateError });
+        return NextResponse.json(
+          { error: "Failed to update document with processed content" },
+          { status: 500 }
+        );
+      }
+
+      logInfo("Document processing completed", { documentId });
+
+      return NextResponse.json({
+        message: "Document processed successfully",
+        documentId,
+      });
+    } catch (error) {
+      // Update document status to error
+      await supabase
+        .from("documents")
+        .update({
+          status: "error",
+          error_message: error instanceof Error ? error.message : "Unknown error",
+        })
+        .eq("id", documentId);
+
+      throw error;
+    }
   } catch (error) {
-    const duration = Date.now() - startTime;
-    logResponse(new Response(JSON.stringify({ error: "Internal Server Error" })), duration, {
-      path: "/api/documents/process",
-      method: "POST",
-      status: 500,
-      error,
-    });
-
+    logError("Error processing document", { error });
     return NextResponse.json(
-      { error: "Internal Server Error" },
+      { error: "Failed to process document" },
       { status: 500 }
     );
   }

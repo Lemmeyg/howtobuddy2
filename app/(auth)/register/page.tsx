@@ -1,11 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import Link from "next/link";
-import { useToast } from "@/components/ui/use-toast";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { z } from "zod";
 
 const registerSchema = z.object({
@@ -32,10 +32,13 @@ export default function RegisterPage() {
   const [validationErrors, setValidationErrors] = useState<Record<string, string>>({});
   
   const router = useRouter();
-  const { toast } = useToast();
+  const searchParams = useSearchParams();
+  const supabase = createClientComponentClient();
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (isLoading) return;
+
     setIsLoading(true);
     setError("");
     setValidationErrors({});
@@ -49,46 +52,52 @@ export default function RegisterPage() {
           errors[issue.path[0]] = issue.message;
         });
         setValidationErrors(errors);
-        setIsLoading(false);
         return;
       }
 
-      const response = await fetch("/api/auth/register", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
+      console.log('🔐 Starting registration...');
+      
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          emailRedirectTo: `${window.location.origin}/auth/callback`,
         },
-        body: JSON.stringify({ email, password }),
       });
 
-      let data;
-      try {
-        data = await response.json();
-      } catch (e) {
-        throw new Error("Failed to parse server response");
-      }
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to register");
-      }
-
-      toast({
-        title: "Registration successful!",
-        description: "Please check your email to verify your account.",
+      console.log('📨 Registration response:', {
+        success: !!data?.user,
+        hasError: !!error,
+        userId: data?.user?.id
       });
 
-      // Redirect to login page after a short delay
-      setTimeout(() => {
-        router.push("/login");
-      }, 2000);
+      if (error) throw error;
+
+      if (data?.user) {
+        // Get redirect path or go to dashboard
+        const redirectTo = searchParams.get("redirectTo") || "/dashboard";
+        console.log('📍 Redirect path:', redirectTo);
+
+        // Verify the session is set
+        const verifySession = await supabase.auth.getSession();
+        console.log('🔍 Verifying session:', {
+          hasVerifiedSession: !!verifySession.data.session,
+          sessionMatch: verifySession.data.session?.user?.id === data.user.id
+        });
+
+        // Only navigate if session is verified
+        if (verifySession.data.session) {
+          console.log('🚀 Session verified, attempting navigation to:', redirectTo);
+          router.push(redirectTo);
+          console.log('✈️ Navigation called');
+        } else {
+          console.log('📧 Registration successful, email verification required');
+          router.push('/login?message=check-email');
+        }
+      }
     } catch (error: any) {
-      console.error("Registration error:", error);
+      console.error('❌ Registration error:', error);
       setError(error.message || "Failed to register");
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: error.message || "Failed to register",
-      });
     } finally {
       setIsLoading(false);
     }
@@ -122,6 +131,7 @@ export default function RegisterPage() {
               onChange={(e) => setEmail(e.target.value)}
               required
               disabled={isLoading}
+              autoComplete="email"
             />
             {validationErrors.email && (
               <p className="text-sm text-red-500">{validationErrors.email}</p>
@@ -137,10 +147,14 @@ export default function RegisterPage() {
               onChange={(e) => setPassword(e.target.value)}
               required
               disabled={isLoading}
+              autoComplete="new-password"
             />
             {validationErrors.password && (
               <p className="text-sm text-red-500">{validationErrors.password}</p>
             )}
+            <p className="text-xs text-muted-foreground">
+              Password must be at least 8 characters and include uppercase, lowercase, and numbers
+            </p>
           </div>
 
           <div className="space-y-2">
@@ -152,6 +166,7 @@ export default function RegisterPage() {
               onChange={(e) => setConfirmPassword(e.target.value)}
               required
               disabled={isLoading}
+              autoComplete="new-password"
             />
             {validationErrors.confirmPassword && (
               <p className="text-sm text-red-500">{validationErrors.confirmPassword}</p>

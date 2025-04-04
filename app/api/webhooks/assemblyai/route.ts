@@ -1,71 +1,104 @@
 import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { z } from "zod";
+import { logError, logInfo } from "@/lib/logger";
 
-// AssemblyAI webhook payload schema
-const webhookSchema = z.object({
-  transcript_id: z.string(),
-  status: z.enum(["completed", "error"]),
-  text: z.string().optional(),
-  error: z.string().optional(),
-  confidence: z.number().optional(),
-  language_code: z.string().optional(),
-  audio_duration: z.number().optional(),
-  word_count: z.number().optional(),
-  completed_at: z.string().optional(),
-});
+// Verify webhook signature
+function verifyWebhookSignature(signature: string, payload: string): boolean {
+  const secret = process.env.ASSEMBLY_WEBHOOK_SECRET;
+  if (!secret) {
+    logError("AssemblyAI webhook secret not configured");
+    return false;
+  }
+
+  const crypto = require("crypto");
+  const hmac = crypto.createHmac("sha256", secret);
+  hmac.update(payload);
+  const calculatedSignature = hmac.digest("hex");
+  return crypto.timingSafeEqual(
+    Buffer.from(signature),
+    Buffer.from(calculatedSignature)
+  );
+}
 
 export async function POST(request: Request) {
   try {
+    // Verify webhook signature
+    const signature = request.headers.get("x-assembly-signature");
+    const payload = await request.text();
+    
+    if (!signature || !verifyWebhookSignature(signature, payload)) {
+      logError("Invalid webhook signature");
+      return NextResponse.json(
+        { error: "Invalid signature" },
+        { status: 401 }
+      );
+    }
+
+    const data = JSON.parse(payload);
+    const { transcript_id, status, text, error } = data;
+
+    if (!transcript_id) {
+      logError("Missing transcript_id in webhook payload");
+      return NextResponse.json(
+        { error: "Missing transcript_id" },
+        { status: 400 }
+      );
+    }
+
     const supabase = createRouteHandlerClient({ cookies });
 
-    // Parse and validate webhook payload
-    const body = await request.json();
-    const payload = webhookSchema.parse(body);
-
-    // Find document by transcription ID
-    const { data: documents, error: findError } = await supabase
+    // Find document by transcript_id
+    const { data: document, error: fetchError } = await supabase
       .from("documents")
-      .select("id")
-      .eq("transcription_id", payload.transcript_id)
+      .select("*")
+      .eq("transcript_id", transcript_id)
       .single();
 
-    if (findError || !documents) {
-      console.error("Error finding document:", findError);
+    if (fetchError || !document) {
+      logError("Document not found for transcript", { transcript_id });
       return NextResponse.json(
         { error: "Document not found" },
         { status: 404 }
       );
     }
 
-    // Update document with transcription results
+    // Update document based on transcription status
+    const updateData: any = {
+      status: status === "completed" ? "completed" : "error",
+      updated_at: new Date().toISOString(),
+    };
+
+    if (status === "completed" && text) {
+      updateData.content = text;
+      updateData.completed_at = new Date().toISOString();
+    } else if (status === "error") {
+      updateData.error_message = error || "Unknown error occurred";
+    }
+
     const { error: updateError } = await supabase
       .from("documents")
-      .update({
-        status: payload.status === "completed" ? "completed" : "error",
-        content: payload.text,
-        error_message: payload.error,
-        metadata: {
-          ...payload,
-          completed_at: new Date().toISOString(),
-        },
-      })
-      .eq("id", documents.id);
+      .update(updateData)
+      .eq("id", document.id);
 
     if (updateError) {
-      console.error("Error updating document:", updateError);
-      return NextResponse.json(
-        { error: "Failed to update document" },
-        { status: 500 }
-      );
+      logError("Error updating document", { 
+        documentId: document.id, 
+        error: updateError 
+      });
+      throw updateError;
     }
+
+    logInfo("Document updated from webhook", { 
+      documentId: document.id, 
+      status 
+    });
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Error processing webhook:", error);
+    logError("Error processing webhook", { error });
     return NextResponse.json(
-      { error: "Failed to process webhook" },
+      { error: "Internal server error" },
       { status: 500 }
     );
   }

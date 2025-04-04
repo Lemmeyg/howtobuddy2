@@ -1,15 +1,17 @@
 import { AssemblyAITranscriptResponse, AssemblyAIError, YouTubeVideoInfo } from "@/types/assemblyai";
+import { logError, logInfo } from "./logger";
 
-const ASSEMBLYAI_API_KEY = process.env.ASSEMBLYAI_API_KEY;
-const ASSEMBLYAI_API_URL = "https://api.assemblyai.com/v2";
+const ASSEMBLY_API_KEY = process.env.ASSEMBLY_API_KEY;
+const ASSEMBLY_API_URL = "https://api.assemblyai.com/v2";
+const WEBHOOK_URL = process.env.NEXT_PUBLIC_APP_URL + "/api/webhooks/assemblyai";
 const MAX_RETRIES = 3;
 const RETRY_DELAY = 1000; // 1 second
 const POLLING_INTERVAL = 5000; // 5 seconds
 const MAX_POLLING_TIME = 300000; // 5 minutes
 const MAX_POLLING_ATTEMPTS = MAX_POLLING_TIME / POLLING_INTERVAL;
 
-if (!ASSEMBLYAI_API_KEY) {
-  throw new Error("ASSEMBLYAI_API_KEY is not set in environment variables");
+if (!ASSEMBLY_API_KEY) {
+  throw new Error("ASSEMBLY_API_KEY is not defined");
 }
 
 async function delay(ms: number) {
@@ -33,53 +35,164 @@ async function fetchWithRetry(
   }
 }
 
-export async function submitTranscriptRequest(videoUrl: string): Promise<{ id: string }> {
-  const webhookUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/transcribe/webhook`;
-  
-  const response = await fetchWithRetry(`${ASSEMBLYAI_API_URL}/transcript`, {
-    method: "POST",
-    headers: {
-      "Authorization": ASSEMBLYAI_API_KEY,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      audio_url: videoUrl,
-      language_code: "en",
-      punctuate: true,
-      format_text: true,
-      webhook_url: webhookUrl,
-      webhook_auth_header_name: "X-Webhook-Auth",
-      webhook_auth_header_value: process.env.WEBHOOK_SECRET,
-    }),
-  });
-
-  if (!response.ok) {
-    const error: AssemblyAIError = await response.json();
-    if (response.status === 429) {
-      throw new Error("Rate limit exceeded. Please try again later.");
-    }
-    throw new Error(error.error || "Failed to submit transcript request");
-  }
-
-  return response.json();
+interface TranscriptionJob {
+  id: string;
+  status: 'queued' | 'processing' | 'completed' | 'error';
+  error?: string;
+  text?: string;
+  audio_duration?: number;
+  confidence?: number;
+  words?: Array<{
+    text: string;
+    start: number;
+    end: number;
+    confidence: number;
+  }>;
+  chapters?: Array<{
+    headline: string;
+    start: number;
+    end: number;
+    summary: string;
+  }>;
+  highlights?: Array<{
+    text: string;
+    start: number;
+    end: number;
+    rank: number;
+  }>;
+  entities?: Array<{
+    text: string;
+    entity_type: string;
+    start: number;
+    end: number;
+  }>;
 }
 
-export async function getTranscriptStatus(transcriptId: string): Promise<AssemblyAITranscriptResponse> {
-  const response = await fetchWithRetry(`${ASSEMBLYAI_API_URL}/transcript/${transcriptId}`, {
-    headers: {
-      "Authorization": ASSEMBLYAI_API_KEY,
-    },
-  });
+export async function submitTranscriptionJob(videoUrl: string): Promise<string> {
+  try {
+    logInfo("Submitting transcription job", { videoUrl });
 
-  if (!response.ok) {
-    const error: AssemblyAIError = await response.json();
-    if (response.status === 429) {
-      throw new Error("Rate limit exceeded. Please try again later.");
+    const response = await fetch(`${ASSEMBLY_API_URL}/transcript`, {
+      method: "POST",
+      headers: {
+        "Authorization": ASSEMBLY_API_KEY,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        audio_url: videoUrl,
+        auto_chapters: true,
+        auto_highlights: true,
+        entity_detection: true,
+        sentiment_analysis: true,
+        iab_categories: true,
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(`AssemblyAI API error: ${error.error || "Unknown error"}`);
     }
-    throw new Error(error.error || "Failed to get transcript status");
+
+    const data = await response.json();
+    logInfo("Transcription job submitted", { jobId: data.id });
+
+    return data.id;
+  } catch (error) {
+    logError("Error submitting transcription job", { error, videoUrl });
+    throw error;
+  }
+}
+
+export async function waitForTranscription(jobId: string): Promise<TranscriptionJob> {
+  try {
+    while (true) {
+      const response = await fetch(`${ASSEMBLY_API_URL}/transcript/${jobId}`, {
+        headers: {
+          "Authorization": ASSEMBLY_API_KEY,
+        },
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(`AssemblyAI API error: ${error.error || "Unknown error"}`);
+      }
+
+      const data: TranscriptionJob = await response.json();
+
+      if (data.status === "completed") {
+        logInfo("Transcription completed", { jobId });
+        return data;
+      }
+
+      if (data.status === "error") {
+        throw new Error(data.error || "Transcription failed");
+      }
+
+      // Wait 5 seconds before checking again
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    }
+  } catch (error) {
+    logError("Error waiting for transcription", { error, jobId });
+    throw error;
+  }
+}
+
+export async function getTranscriptionStatus(transcriptId: string): Promise<TranscriptionJob> {
+  try {
+    logInfo("Checking transcription status", { transcriptId });
+
+    const response = await fetch(`${ASSEMBLY_API_URL}/transcript/${transcriptId}`, {
+      headers: {
+        "Authorization": ASSEMBLY_API_KEY,
+      },
+    });
+
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(`AssemblyAI API error: ${error.error || "Unknown error"}`);
+    }
+
+    const data = await response.json();
+    logInfo("Transcription status retrieved", { 
+      transcriptId, 
+      status: data.status 
+    });
+
+    return data;
+  } catch (error) {
+    logError("Error checking transcription status", { error, transcriptId });
+    throw error;
+  }
+}
+
+export async function waitForTranscriptionCompletion(
+  transcriptId: string,
+  onProgress?: (status: TranscriptionJob) => void
+): Promise<string> {
+  const maxAttempts = 60; // 5 minutes with 5-second intervals
+  const interval = 5000;
+  let attempts = 0;
+
+  while (attempts < maxAttempts) {
+    const result = await getTranscriptionStatus(transcriptId);
+
+    if (onProgress) {
+      onProgress(result);
+    }
+
+    if (result.status === "completed" && result.text) {
+      return result.text;
+    }
+
+    if (result.status === "error") {
+      throw new Error(`Transcription failed: ${result.error || "Unknown error"}`);
+    }
+
+    await new Promise(resolve => setTimeout(resolve, interval));
+    attempts++;
   }
 
-  return response.json();
+  throw new Error("Transcription timed out");
 }
 
 export async function getYouTubeVideoInfo(videoUrl: string): Promise<YouTubeVideoInfo> {

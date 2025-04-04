@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
 import { cookies } from "next/headers";
 import { z } from "zod";
+import { logError, logInfo } from "@/lib/logger";
+import { createDocumentSchema } from '@/lib/schemas';
 
 const querySchema = z.object({
   status: z.enum(["all", "processing", "completed", "error"]).optional(),
@@ -17,81 +19,55 @@ const querySchema = z.object({
 export async function GET(request: Request) {
   try {
     const supabase = createRouteHandlerClient({ cookies });
+    const { data: { session } } = await supabase.auth.getSession();
 
-    // Get user session
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-    if (sessionError || !session) {
-      console.error('Documents API: No session found', sessionError);
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!session) {
+      return NextResponse.json(
+        { error: 'Unauthorized' },
+        { status: 401 }
+      );
     }
 
-    // Parse and validate query parameters
     const { searchParams } = new URL(request.url);
-    const query = querySchema.parse(Object.fromEntries(searchParams));
+    const status = searchParams.get('status');
+    const page = parseInt(searchParams.get('page') || '1');
+    const limit = parseInt(searchParams.get('limit') || '10');
+    const offset = (page - 1) * limit;
 
-    // Build query
-    let queryBuilder = supabase
-      .from("documents")
-      .select("*", { count: "exact" })
-      .eq("user_id", session.user.id);
+    let query = supabase
+      .from('documents')
+      .select('*', { count: 'exact' })
+      .eq('user_id', session.user.id)
+      .order('created_at', { ascending: false })
+      .range(offset, offset + limit - 1);
 
-    // Apply search if specified
-    if (query.search) {
-      queryBuilder = queryBuilder.ilike("title", `%${query.search}%`);
+    if (status) {
+      query = query.eq('status', status);
     }
 
-    // Apply status filter if specified
-    if (query.status && query.status !== "all") {
-      queryBuilder = queryBuilder.eq("status", query.status);
-    }
-
-    // Apply date range filter
-    if (query.from) {
-      queryBuilder = queryBuilder.gte("created_at", query.from);
-    }
-
-    if (query.to) {
-      queryBuilder = queryBuilder.lte("created_at", query.to);
-    }
-
-    // Apply sorting
-    const sortBy = query.sortBy || "created_at";
-    const sortOrder = query.sortOrder || "desc";
-    queryBuilder = queryBuilder.order(sortBy, { ascending: sortOrder === "asc" });
-
-    // Apply pagination
-    const page = query.page || 1;
-    const limit = query.limit || 10;
-    const start = (page - 1) * limit;
-    const end = start + limit - 1;
-
-    queryBuilder = queryBuilder.range(start, end);
-
-    // Execute query
-    const { data: documents, error, count } = await queryBuilder;
+    const { data: documents, error, count } = await query;
 
     if (error) {
-      console.error('Documents API: Database error', error);
-      throw error;
+      console.error('Error fetching documents:', error);
+      return NextResponse.json(
+        { error: 'Failed to fetch documents' },
+        { status: 500 }
+      );
     }
 
-    // Return consistent response structure
     return NextResponse.json({
-      data: {
-        documents: documents || [],
+      documents,
+      pagination: {
         total: count || 0,
         page,
         limit,
-        hasMore: (page * limit) < (count || 0)
-      }
+        totalPages: Math.ceil((count || 0) / limit),
+      },
     });
   } catch (error) {
-    console.error('Documents API: Unexpected error', error);
+    console.error('Error in GET /api/documents:', error);
     return NextResponse.json(
-      { 
-        error: "Internal Server Error",
-        details: error instanceof Error ? error.message : "Unknown error"
-      },
+      { error: 'Internal server error' },
       { status: 500 }
     );
   }
@@ -104,41 +80,51 @@ export async function POST(request: Request) {
 
     if (!session) {
       return NextResponse.json(
-        { error: "Unauthorized" },
+        { error: 'Unauthorized' },
         { status: 401 }
       );
     }
 
-    const { videoUrl } = await request.json();
+    const body = await request.json();
+    const validatedData = createDocumentSchema.parse(body);
 
     const { data: document, error } = await supabase
-      .from("documents")
-      .insert([
-        {
-          user_id: session.user.id,
-          title: "New Document",
-          video_url: videoUrl,
-          video_title: "Processing...",
-          video_duration: 0,
-          status: "processing",
+      .from('documents')
+      .insert({
+        user_id: session.user.id,
+        title: validatedData.title,
+        video_url: validatedData.videoUrl,
+        status: 'pending',
+        metadata: {
+          skillLevel: validatedData.skillLevel,
+          outputType: validatedData.outputType,
         },
-      ])
+      })
       .select()
       .single();
 
     if (error) {
-      console.error('Documents API: Insert error', error);
-      throw error;
+      console.error('Error creating document:', error);
+      return NextResponse.json(
+        { error: 'Failed to create document' },
+        { status: 500 }
+      );
     }
 
-    return NextResponse.json({ data: { document } });
-  } catch (error) {
-    console.error("Documents API: Create error", error);
-    return NextResponse.json(
-      { 
-        error: "Failed to create document",
-        details: error instanceof Error ? error.message : "Unknown error"
+    // Trigger processing
+    await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/documents/process`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
       },
+      body: JSON.stringify({ documentId: document.id }),
+    });
+
+    return NextResponse.json(document);
+  } catch (error) {
+    console.error('Error in POST /api/documents:', error);
+    return NextResponse.json(
+      { error: 'Internal server error' },
       { status: 500 }
     );
   }
