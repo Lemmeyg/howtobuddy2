@@ -11,15 +11,18 @@ import { formatDistanceToNow } from "date-fns";
 import { useRouter, useSearchParams } from "next/navigation";
 import { logInfo } from "@/lib/logger";
 import { useDebounce } from "@/hooks/use-debounce";
+import Link from "next/link";
+import { FileText, Clock, AlertCircle } from "lucide-react";
+import { DocumentActions } from "@/components/document/document-actions";
+import { DocumentFilters } from "@/components/document/document-filters";
 
 interface Document {
   id: string;
   title: string;
   status: "processing" | "completed" | "error";
   created_at: string;
-  video_title?: string;
-  video_duration?: number;
-  error_message?: string;
+  updated_at: string;
+  content?: string;
 }
 
 interface DocumentListProps {
@@ -40,6 +43,7 @@ export function DocumentList({ documents: initialDocuments, isLoading = false }:
   const [filter, setFilter] = useState<"all" | "processing" | "completed" | "error">(
     (searchParams.get("status") as any) || "all"
   );
+  const [dateRange, setDateRange] = useState<{ from?: Date; to?: Date }>({});
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
@@ -57,6 +61,8 @@ export function DocumentList({ documents: initialDocuments, isLoading = false }:
           ...(filter !== "all" && { status: filter }),
           sortBy,
           sortOrder,
+          ...(dateRange.from && { from: dateRange.from.toISOString() }),
+          ...(dateRange.to && { to: dateRange.to.toISOString() }),
         });
 
         const response = await fetch(`/api/documents?${params}`);
@@ -74,7 +80,7 @@ export function DocumentList({ documents: initialDocuments, isLoading = false }:
     };
 
     fetchDocuments();
-  }, [debouncedSearch, filter, sortBy, sortOrder, page]);
+  }, [debouncedSearch, filter, sortBy, sortOrder, page, dateRange]);
 
   useEffect(() => {
     const params = new URLSearchParams();
@@ -82,10 +88,12 @@ export function DocumentList({ documents: initialDocuments, isLoading = false }:
     if (filter !== "all") params.set("status", filter);
     if (sortBy !== "created_at") params.set("sortBy", sortBy);
     if (sortOrder !== "desc") params.set("sortOrder", sortOrder);
+    if (dateRange.from) params.set("from", dateRange.from.toISOString());
+    if (dateRange.to) params.set("to", dateRange.to.toISOString());
 
     const newUrl = params.toString() ? `?${params.toString()}` : "";
     router.push(`/dashboard/documents${newUrl}`);
-  }, [search, filter, sortBy, sortOrder, router]);
+  }, [search, filter, sortBy, sortOrder, dateRange, router]);
 
   const handleDocumentClick = (documentId: string) => {
     logInfo("Document clicked", { documentId });
@@ -99,151 +107,85 @@ export function DocumentList({ documents: initialDocuments, isLoading = false }:
   if (isLoading) {
     return (
       <div className="space-y-4">
-        {[1, 2, 3].map((i) => (
-          <Card key={i}>
-            <CardHeader>
-              <Skeleton className="h-6 w-[200px]" />
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                <Skeleton className="h-4 w-full" />
-                <Skeleton className="h-4 w-[80%]" />
-              </div>
-            </CardContent>
-          </Card>
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div key={i} className="flex items-center justify-between p-4 border rounded-lg">
+            <div className="space-y-2">
+              <Skeleton className="h-4 w-[250px]" />
+              <Skeleton className="h-4 w-[200px]" />
+            </div>
+            <Skeleton className="h-8 w-8 rounded-full" />
+          </div>
         ))}
+      </div>
+    );
+  }
+
+  if (!documents?.length) {
+    return (
+      <div className="text-center py-12 border rounded-lg">
+        <FileText className="h-12 w-12 mx-auto text-muted-foreground" />
+        <h3 className="mt-4 text-lg font-semibold">No documents</h3>
+        <p className="text-sm text-muted-foreground">
+          Get started by creating your first document
+        </p>
       </div>
     );
   }
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-1 gap-2">
-          <Input
-            placeholder="Search documents..."
-            value={search}
-            onChange={(e) => {
-              setSearch(e.target.value);
-              setPage(1);
-            }}
-            className="max-w-sm"
-          />
-          <Select
-            value={sortBy}
-            onValueChange={(value: SortBy) => {
-              setSortBy(value);
-              setPage(1);
-            }}
-          >
-            <SelectTrigger className="w-[180px]">
-              <SelectValue placeholder="Sort by" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="created_at">Date</SelectItem>
-              <SelectItem value="title">Title</SelectItem>
-              <SelectItem value="video_title">Video Title</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button
-            variant="outline"
-            onClick={() => setSortOrder((prev) => (prev === "asc" ? "desc" : "asc"))}
-          >
-            {sortOrder === "asc" ? "↑" : "↓"}
-          </Button>
-        </div>
-        <div className="flex gap-2">
-          <Badge
-            variant={filter === "all" ? "default" : "outline"}
-            className="cursor-pointer"
-            onClick={() => {
-              setFilter("all");
-              setPage(1);
-            }}
-          >
-            All
-          </Badge>
-          <Badge
-            variant={filter === "processing" ? "default" : "outline"}
-            className="cursor-pointer"
-            onClick={() => {
-              setFilter("processing");
-              setPage(1);
-            }}
-          >
-            Processing
-          </Badge>
-          <Badge
-            variant={filter === "completed" ? "default" : "outline"}
-            className="cursor-pointer"
-            onClick={() => {
-              setFilter("completed");
-              setPage(1);
-            }}
-          >
-            Completed
-          </Badge>
-          <Badge
-            variant={filter === "error" ? "default" : "outline"}
-            className="cursor-pointer"
-            onClick={() => {
-              setFilter("error");
-              setPage(1);
-            }}
-          >
-            Error
-          </Badge>
-        </div>
-      </div>
+      <DocumentFilters
+        search={search}
+        onSearchChange={(value) => {
+          setSearch(value);
+          setPage(1);
+        }}
+        sortBy={sortBy}
+        onSortByChange={(value: SortBy) => {
+          setSortBy(value);
+          setPage(1);
+        }}
+        sortOrder={sortOrder}
+        onSortOrderChange={(value) => {
+          setSortOrder(value);
+          setPage(1);
+        }}
+        status={filter}
+        onStatusChange={(value: "all" | "processing" | "completed" | "error") => {
+          setFilter(value);
+          setPage(1);
+        }}
+        dateRange={dateRange}
+        onDateRangeChange={(range) => {
+          setDateRange(range);
+          setPage(1);
+        }}
+      />
 
       <div className="space-y-4">
-        {documents.map((doc) => (
-          <Card
-            key={doc.id}
-            className="cursor-pointer hover:bg-accent/50 transition-colors"
-            onClick={() => handleDocumentClick(doc.id)}
+        {documents.map((document) => (
+          <div
+            key={document.id}
+            className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50 transition-colors"
           >
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-lg">{doc.title}</CardTitle>
-                <Badge
-                  variant={
-                    doc.status === "completed"
-                      ? "default"
-                      : doc.status === "error"
-                      ? "destructive"
-                      : "secondary"
-                  }
-                >
-                  {doc.status}
-                </Badge>
+            <div className="min-w-0 flex-1">
+              <Link
+                href={`/dashboard/documents/${document.id}`}
+                className="block hover:underline font-medium truncate"
+              >
+                {document.title}
+              </Link>
+              <div className="flex items-center gap-4 mt-1 text-sm text-muted-foreground">
+                <span>
+                  Updated {formatDistanceToNow(new Date(document.updated_at), { addSuffix: true })}
+                </span>
+                <StatusBadge status={document.status} />
               </div>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                {doc.video_title && (
-                  <p className="text-sm text-muted-foreground">
-                    Video: {doc.video_title}
-                  </p>
-                )}
-                {doc.video_duration && (
-                  <p className="text-sm text-muted-foreground">
-                    Duration: {Math.floor(doc.video_duration / 60)}m{" "}
-                    {doc.video_duration % 60}s
-                  </p>
-                )}
-                {doc.error_message && (
-                  <p className="text-sm text-destructive">{doc.error_message}</p>
-                )}
-                <p className="text-sm text-muted-foreground">
-                  Created{" "}
-                  {formatDistanceToNow(new Date(doc.created_at), {
-                    addSuffix: true,
-                  })}
-                </p>
-              </div>
-            </CardContent>
-          </Card>
+            </div>
+            <div className="ml-4">
+              <DocumentActions document={document} />
+            </div>
+          </div>
         ))}
       </div>
 
@@ -260,4 +202,30 @@ export function DocumentList({ documents: initialDocuments, isLoading = false }:
       )}
     </div>
   );
+}
+
+function StatusBadge({ status }: { status: Document["status"] }) {
+  switch (status) {
+    case "processing":
+      return (
+        <Badge variant="secondary" className="gap-1">
+          <Clock className="h-3 w-3" />
+          Processing
+        </Badge>
+      );
+    case "error":
+      return (
+        <Badge variant="destructive" className="gap-1">
+          <AlertCircle className="h-3 w-3" />
+          Error
+        </Badge>
+      );
+    default:
+      return (
+        <Badge variant="default" className="gap-1">
+          <FileText className="h-3 w-3" />
+          Completed
+        </Badge>
+      );
+  }
 } 

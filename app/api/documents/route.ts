@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { logRequest, logResponse } from "@/lib/logger";
 import { z } from "zod";
+import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
+import { cookies } from "next/headers";
 
 const querySchema = z.object({
   status: z.enum(["all", "processing", "completed", "error"]).optional(),
@@ -10,11 +12,13 @@ const querySchema = z.object({
   search: z.string().optional(),
   sortBy: z.enum(["created_at", "title", "video_title"]).optional(),
   sortOrder: z.enum(["asc", "desc"]).optional(),
+  from: z.string().optional(),
+  to: z.string().optional(),
 });
 
 export async function GET(request: Request) {
   const startTime = Date.now();
-  const supabase = createClient();
+  const supabase = createRouteHandlerClient({ cookies });
 
   try {
     // Get user session
@@ -30,19 +34,26 @@ export async function GET(request: Request) {
     // Build query
     let queryBuilder = supabase
       .from("documents")
-      .select("*")
+      .select("*", { count: "exact" })
       .eq("user_id", session.user.id);
 
     // Apply search if specified
     if (query.search) {
-      queryBuilder = queryBuilder.or(
-        `title.ilike.%${query.search}%,video_title.ilike.%${query.search}%`
-      );
+      queryBuilder = queryBuilder.ilike("title", `%${query.search}%`);
     }
 
     // Apply status filter if specified
     if (query.status && query.status !== "all") {
       queryBuilder = queryBuilder.eq("status", query.status);
+    }
+
+    // Apply date range filter
+    if (query.from) {
+      queryBuilder = queryBuilder.gte("created_at", query.from);
+    }
+
+    if (query.to) {
+      queryBuilder = queryBuilder.lte("created_at", query.to);
     }
 
     // Apply sorting
@@ -75,11 +86,10 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       documents,
-      pagination: {
-        page,
-        limit,
-        total: count || documents.length,
-      },
+      total: count,
+      page,
+      limit,
+      hasMore: (page * limit) < (count || 0)
     });
   } catch (error) {
     const duration = Date.now() - startTime;

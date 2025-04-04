@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,56 +19,36 @@ export default function LoginPage() {
   const { toast } = useToast();
   const supabase = createClientComponentClient();
 
-  // Check for existing session on mount
-  useEffect(() => {
-    const checkSession = async () => {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session) {
-        const redirectTo = searchParams.get("redirectTo") || "/dashboard";
-        router.push(redirectTo);
-      }
-    };
-    checkSession();
-  }, []);
-
-  async function onSubmit(e: React.FormEvent) {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isLoading) return;
+    
     setIsLoading(true);
     setError("");
 
     try {
-      console.log("Attempting login...");
-      const response = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ email, password }),
+      // Sign in with Supabase
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email,
+        password,
       });
 
-      const data = await response.json();
-      console.log("Login response:", data);
+      if (error) throw error;
 
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to sign in");
+      if (data?.session) {
+        // Show success toast
+        toast({
+          title: "Success!",
+          description: "You have been signed in successfully.",
+        });
+
+        // Get redirect path
+        const redirectTo = searchParams.get("redirectTo") || "/dashboard";
+        
+        // Use router.push and refresh to ensure proper navigation
+        router.push(redirectTo);
+        router.refresh();
       }
-
-      // Update the client-side session
-      await supabase.auth.setSession({
-        access_token: data.session.access_token,
-        refresh_token: data.session.refresh_token,
-      });
-
-      toast({
-        title: "Success!",
-        description: "You have been signed in successfully.",
-      });
-
-      // Redirect to the original destination or dashboard
-      const redirectTo = searchParams.get("redirectTo") || "/dashboard";
-      console.log("Redirecting to:", redirectTo);
-      router.push(redirectTo);
-      router.refresh(); // Refresh to ensure server components re-render
     } catch (error: any) {
       console.error("Login error:", error);
       setError(error.message || "Failed to sign in");
@@ -80,7 +60,7 @@ export default function LoginPage() {
     } finally {
       setIsLoading(false);
     }
-  }
+  };
 
   return (
     <div className="container flex h-screen w-screen flex-col items-center justify-center">
@@ -94,7 +74,7 @@ export default function LoginPage() {
           </p>
         </div>
 
-        <form onSubmit={onSubmit} className="space-y-4">
+        <form onSubmit={handleSubmit} className="space-y-4">
           {error && (
             <div className="p-3 text-sm text-red-500 bg-red-50 rounded-md">
               {error}

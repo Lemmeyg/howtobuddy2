@@ -8,16 +8,15 @@ const RATE_LIMIT_WINDOW = 60 * 1000; // 1 minute
 const MAX_REQUESTS = 60; // 60 requests per minute
 
 export async function middleware(request: NextRequest) {
-  // Get the pathname of the request (e.g. /, /protected, /login)
+  // Get the pathname of the request
   const path = request.nextUrl.pathname;
 
   // Create a response object to modify
   const res = NextResponse.next();
   const supabase = createMiddlewareClient({ req: request, res });
 
-  const {
-    data: { session },
-  } = await supabase.auth.getSession();
+  // Refresh session if expired - required for Server Components
+  const { data: { session }, error } = await supabase.auth.getSession();
 
   // Public routes that don't require authentication
   const isPublicRoute = path === "/" || 
@@ -32,7 +31,7 @@ export async function middleware(request: NextRequest) {
   if (!session && !isPublicRoute) {
     // Redirect to login page if accessing protected route without session
     const redirectUrl = new URL("/login", request.url);
-    redirectUrl.searchParams.set("redirect", path);
+    redirectUrl.searchParams.set("redirectTo", path);
     return NextResponse.redirect(redirectUrl);
   }
 
