@@ -8,15 +8,26 @@ const RATE_LIMIT_WINDOW = 60 * 1000; // 1 minute
 const MAX_REQUESTS = 60; // 60 requests per minute
 
 export async function middleware(request: NextRequest) {
+  console.log('🚨 Middleware Execution Started 🚨');
+  
   // Get the pathname of the request
   const path = request.nextUrl.pathname;
+  console.log('🛣️ Middleware - Path:', path);
 
   // Create a response object to modify
   const res = NextResponse.next();
   const supabase = createMiddlewareClient({ req: request, res });
+  console.log('🔧 Middleware - Supabase client created');
 
   // Refresh session if expired - required for Server Components
   const { data: { session }, error } = await supabase.auth.getSession();
+  console.log('🔒 Middleware - Session state:', {
+    hasSession: !!session,
+    hasError: !!error,
+    userId: session?.user?.id,
+    path: path,
+    timestamp: new Date().toISOString()
+  });
 
   // Public routes that don't require authentication
   const isPublicRoute = path === "/" || 
@@ -27,8 +38,17 @@ export async function middleware(request: NextRequest) {
                        path.startsWith("/_next") || 
                        path.includes(".");
 
+  console.log('🚪 Middleware - Route access:', {
+    path,
+    isPublicRoute,
+    hasSession: !!session,
+    willRedirect: !session && !isPublicRoute,
+    timestamp: new Date().toISOString()
+  });
+
   // Check auth condition
   if (!session && !isPublicRoute) {
+    console.log('🚫 Middleware - Redirecting to login due to no session');
     // Redirect to login page if accessing protected route without session
     const redirectUrl = new URL("/login", request.url);
     redirectUrl.searchParams.set("redirectTo", path);
@@ -37,55 +57,11 @@ export async function middleware(request: NextRequest) {
 
   // If user is signed in and trying to access auth pages, redirect to dashboard
   if (session && (path === "/login" || path === "/register" || path === "/reset-password")) {
+    console.log('↪️ Middleware - Redirecting authenticated user to dashboard');
     return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 
-  // Only apply rate limiting to API routes
-  if (!path.startsWith("/api/")) {
-    return res;
-  }
-
-  const ip = request.ip ?? "127.0.0.1";
-  const now = Date.now();
-
-  // Clean up old entries
-  for (const [key, value] of rateLimit.entries()) {
-    if (now - value.timestamp > RATE_LIMIT_WINDOW) {
-      rateLimit.delete(key);
-    }
-  }
-
-  // Get or create rate limit entry
-  const rateLimitEntry = rateLimit.get(ip);
-  if (!rateLimitEntry) {
-    rateLimit.set(ip, { count: 1, timestamp: now });
-    return res;
-  }
-
-  // Check if within window
-  if (now - rateLimitEntry.timestamp > RATE_LIMIT_WINDOW) {
-    rateLimit.set(ip, { count: 1, timestamp: now });
-    return res;
-  }
-
-  // Check if exceeded limit
-  if (rateLimitEntry.count >= MAX_REQUESTS) {
-    return new NextResponse(
-      JSON.stringify({
-        error: "Too many requests. Please try again later.",
-      }),
-      {
-        status: 429,
-        headers: {
-          "Content-Type": "application/json",
-          "Retry-After": "60",
-        },
-      }
-    );
-  }
-
-  // Increment counter
-  rateLimitEntry.count++;
+  console.log('✅ Middleware - Request proceeding normally');
   return res;
 }
 

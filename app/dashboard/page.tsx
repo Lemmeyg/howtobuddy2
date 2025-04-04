@@ -1,46 +1,77 @@
 import { Suspense } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DocumentList } from "@/components/dashboard/document-list";
-import { createSupabaseClient } from "@/lib/supabase/server";
+import { createSupabaseServer } from "@/lib/supabase/server";
 import { FileText, Clock, AlertCircle } from "lucide-react";
 import { redirect } from "next/navigation";
+import { cookies } from 'next/headers';
+import DashboardError from "@/components/dashboard/error-boundary";
 
 async function getStats() {
-  const supabase = createSupabaseClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  console.log('📊 Dashboard: Starting getStats');
+  
+  try {
+    // Check if we have a session cookie first
+    const cookieStore = cookies();
+    const hasSessionCookie = cookieStore.has('sb-access-token');
+    console.log('🍪 Dashboard: Session cookie present:', hasSessionCookie);
 
-  if (!session) {
-    redirect("/login");
+    const supabase = createSupabaseServer();
+    console.log('🔐 Dashboard: Checking session');
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+
+    if (sessionError) {
+      console.error('❌ Dashboard: Session error:', sessionError);
+      throw new Error(`Failed to get session: ${sessionError.message}`);
+    }
+
+    if (!session) {
+      console.log('⚠️ Dashboard: No session found, redirecting to login');
+      redirect("/login");
+    }
+
+    console.log('✅ Dashboard: Session found for user:', session.user.id);
+
+    try {
+      const { data: documents, error: documentsError } = await supabase
+        .from("documents")
+        .select("*")
+        .eq("user_id", session.user.id)
+        .order("created_at", { ascending: false })
+        .limit(5);
+
+      if (documentsError) {
+        console.error("❌ Dashboard: Error fetching documents:", documentsError);
+        throw new Error(`Failed to fetch documents: ${documentsError.message}`);
+      }
+
+      console.log('📄 Dashboard: Successfully fetched documents');
+
+      // Calculate stats
+      const totalDocuments = documents?.length ?? 0;
+      const processingDocuments = documents?.filter(doc => doc.status === "processing").length ?? 0;
+      const errorDocuments = documents?.filter(doc => doc.status === "error").length ?? 0;
+
+      return {
+        totalDocuments,
+        processingDocuments,
+        errorDocuments,
+        recentDocuments: documents ?? [],
+      };
+    } catch (error) {
+      console.error('❌ Dashboard: Document fetch error:', error);
+      // Return empty stats instead of throwing
+      return {
+        totalDocuments: 0,
+        processingDocuments: 0,
+        errorDocuments: 0,
+        recentDocuments: [],
+      };
+    }
+  } catch (error) {
+    console.error('❌ Dashboard: Critical error:', error);
+    throw error;
   }
-
-  const { data: documents, error } = await supabase
-    .from("documents")
-    .select("*")
-    .eq("user_id", session.user.id)
-    .order("created_at", { ascending: false })
-    .limit(5);
-
-  if (error) {
-    console.error("Error fetching documents:", error);
-    return {
-      totalDocuments: 0,
-      processingDocuments: 0,
-      errorDocuments: 0,
-      recentDocuments: [],
-    };
-  }
-
-  // Calculate stats
-  const totalDocuments = documents.length;
-  const processingDocuments = documents.filter(doc => doc.status === "processing").length;
-  const errorDocuments = documents.filter(doc => doc.status === "error").length;
-
-  return {
-    totalDocuments,
-    processingDocuments,
-    errorDocuments,
-    recentDocuments: documents,
-  };
 }
 
 export default async function DashboardPage() {
@@ -103,4 +134,7 @@ export default async function DashboardPage() {
       </div>
     </div>
   );
-} 
+}
+
+// Add error boundary
+export const error = DashboardError; 

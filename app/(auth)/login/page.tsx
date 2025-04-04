@@ -21,6 +21,7 @@ export default function LoginPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    console.log('🔍 Login attempt started');
     if (isLoading) return;
     
     setIsLoading(true);
@@ -33,24 +34,39 @@ export default function LoginPage() {
         password,
       });
 
+      console.log('🔐 Supabase auth response:', {
+        hasSession: !!data?.session,
+        hasError: !!error,
+        userId: data?.session?.user?.id
+      });
+
       if (error) throw error;
 
       if (data?.session) {
-        // Show success toast
-        toast({
-          title: "Success!",
-          description: "You have been signed in successfully.",
-        });
-
         // Get redirect path
         const redirectTo = searchParams.get("redirectTo") || "/dashboard";
+        console.log('📍 Redirect path:', redirectTo);
+        console.log('🔑 Session token exists:', !!data.session.access_token);
         
-        // Use router.push and refresh to ensure proper navigation
-        router.push(redirectTo);
-        router.refresh();
+        // Verify session is properly set
+        const verifySession = await supabase.auth.getSession();
+        console.log('🔍 Verifying session:', {
+          hasVerifiedSession: !!verifySession.data.session,
+          sessionMatch: verifySession.data.session?.user?.id === data.session.user.id
+        });
+
+        // Only navigate if session is verified
+        if (verifySession.data.session) {
+          console.log('🚀 Session verified, attempting navigation to:', redirectTo);
+          router.push(redirectTo);
+          console.log('✈️ Navigation called');
+        } else {
+          console.error('❌ Session verification failed');
+          setError("Session verification failed. Please try again.");
+        }
       }
     } catch (error: any) {
-      console.error("Login error:", error);
+      console.error('❌ Login error:', error);
       setError(error.message || "Failed to sign in");
       toast({
         variant: "destructive",

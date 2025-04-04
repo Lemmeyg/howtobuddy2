@@ -66,23 +66,37 @@ export function DocumentList({ documents: initialDocuments, isLoading = false }:
         });
 
         const response = await fetch(`/api/documents?${params}`);
-        const data = await response.json();
+        const result = await response.json();
 
-        if (response.ok) {
-          setDocuments(page === 1 ? data.documents : [...documents, ...data.documents]);
-          setHasMore(data.documents.length === 10);
+        if (response.ok && result.data) {
+          const newDocuments = result.data.documents || [];
+          setDocuments(page === 1 ? newDocuments : [...documents, ...newDocuments]);
+          setHasMore(result.data.hasMore);
+        } else {
+          console.error('Error fetching documents:', result.error);
         }
       } catch (error) {
-        logInfo("Error fetching documents", { error });
+        console.error("Error fetching documents", error);
       } finally {
         setIsLoadingMore(false);
       }
     };
 
-    fetchDocuments();
-  }, [debouncedSearch, filter, sortBy, sortOrder, page, dateRange]);
+    // Only fetch if we're on the documents page
+    if (window.location.pathname.includes('/documents')) {
+      fetchDocuments();
+    } else {
+      // If we're on the dashboard, just use the initial documents
+      setDocuments(initialDocuments);
+    }
+  }, [debouncedSearch, filter, sortBy, sortOrder, page, dateRange, initialDocuments]);
 
   useEffect(() => {
+    // Only update URL if we're on the documents page
+    if (!window.location.pathname.includes('/documents')) {
+      return;
+    }
+
     const params = new URLSearchParams();
     if (search) params.set("search", search);
     if (filter !== "all") params.set("status", filter);

@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
-import { logRequest, logResponse } from "@/lib/logger";
-import { z } from "zod";
 import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
 import { cookies } from "next/headers";
+import { z } from "zod";
 
 const querySchema = z.object({
   status: z.enum(["all", "processing", "completed", "error"]).optional(),
@@ -17,13 +15,13 @@ const querySchema = z.object({
 });
 
 export async function GET(request: Request) {
-  const startTime = Date.now();
-  const supabase = createRouteHandlerClient({ cookies });
-
   try {
+    const supabase = createRouteHandlerClient({ cookies });
+
     // Get user session
     const { data: { session }, error: sessionError } = await supabase.auth.getSession();
     if (sessionError || !session) {
+      console.error('Documents API: No session found', sessionError);
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
@@ -73,35 +71,27 @@ export async function GET(request: Request) {
     const { data: documents, error, count } = await queryBuilder;
 
     if (error) {
+      console.error('Documents API: Database error', error);
       throw error;
     }
 
-    const duration = Date.now() - startTime;
-    logResponse(new Response(JSON.stringify(documents)), duration, {
-      userId: session.user.id,
-      path: "/api/documents",
-      method: "GET",
-      status: 200,
-    });
-
+    // Return consistent response structure
     return NextResponse.json({
-      documents,
-      total: count,
-      page,
-      limit,
-      hasMore: (page * limit) < (count || 0)
+      data: {
+        documents: documents || [],
+        total: count || 0,
+        page,
+        limit,
+        hasMore: (page * limit) < (count || 0)
+      }
     });
   } catch (error) {
-    const duration = Date.now() - startTime;
-    logResponse(new Response(JSON.stringify({ error: "Internal Server Error" })), duration, {
-      path: "/api/documents",
-      method: "GET",
-      status: 500,
-      error,
-    });
-
+    console.error('Documents API: Unexpected error', error);
     return NextResponse.json(
-      { error: "Internal Server Error" },
+      { 
+        error: "Internal Server Error",
+        details: error instanceof Error ? error.message : "Unknown error"
+      },
       { status: 500 }
     );
   }
@@ -121,7 +111,6 @@ export async function POST(request: Request) {
 
     const { videoUrl } = await request.json();
 
-    // For now, just create a placeholder document
     const { data: document, error } = await supabase
       .from("documents")
       .insert([
@@ -137,13 +126,19 @@ export async function POST(request: Request) {
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      console.error('Documents API: Insert error', error);
+      throw error;
+    }
 
-    return NextResponse.json({ document });
+    return NextResponse.json({ data: { document } });
   } catch (error) {
-    console.error("Error creating document:", error);
+    console.error("Documents API: Create error", error);
     return NextResponse.json(
-      { error: "Failed to create document" },
+      { 
+        error: "Failed to create document",
+        details: error instanceof Error ? error.message : "Unknown error"
+      },
       { status: 500 }
     );
   }
