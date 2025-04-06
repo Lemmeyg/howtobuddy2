@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { createSupabaseServer } from "@/lib/supabase/server";
 import { logInfo, logError } from "@/lib/logger";
 import { SubscriptionTier, getSubscriptionLimits } from "./subscription";
 import { z } from "zod";
@@ -17,7 +17,7 @@ const usageSchema = z.object({
 export type SubscriptionUsage = z.infer<typeof usageSchema>;
 
 export async function getUserUsage(userId: string): Promise<SubscriptionUsage | null> {
-  const supabase = createClient();
+  const supabase = createSupabaseServer();
 
   try {
     const { data: usage, error } = await supabase
@@ -45,7 +45,7 @@ export async function incrementUsage(
   subscriptionId: string,
   videoDuration: number
 ): Promise<SubscriptionUsage> {
-  const supabase = createClient();
+  const supabase = createSupabaseServer();
 
   try {
     const { data: usage, error } = await supabase.rpc("increment_subscription_usage", {
@@ -66,7 +66,7 @@ export async function incrementUsage(
 }
 
 export async function resetUsage(userId: string, subscriptionId: string): Promise<SubscriptionUsage> {
-  const supabase = createClient();
+  const supabase = createSupabaseServer();
 
   try {
     const { data: usage, error } = await supabase

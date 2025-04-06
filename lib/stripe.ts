@@ -1,5 +1,5 @@
 import Stripe from "stripe";
-import { createClient } from "@/lib/supabase/server";
+import { createSupabaseServer } from "@/lib/supabase/server";
 import { logInfo, logError } from "@/lib/logger";
 import { SubscriptionTier } from "./subscription";
 
@@ -38,7 +38,7 @@ export const subscriptionPlans = {
 } as const;
 
 export async function createStripeCustomer(userId: string, email: string) {
-  const supabase = createClient();
+  const supabase = createSupabaseServer();
 
   try {
     // Check if customer already exists
@@ -78,7 +78,7 @@ export async function createSubscriptionCheckoutSession(
   userId: string,
   tier: keyof typeof subscriptionPlans
 ) {
-  const supabase = createClient();
+  const supabase = createSupabaseServer();
 
   try {
     // Get user email
@@ -132,7 +132,7 @@ export async function createSubscriptionCheckoutSession(
 }
 
 export async function handleSubscriptionWebhook(event: Stripe.Event) {
-  const supabase = createClient();
+  const supabase = createSupabaseServer();
 
   try {
     switch (event.type) {

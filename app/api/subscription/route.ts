@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createSupabaseServer } from "@/lib/supabase/server";
 import { logRequest, logResponse } from "@/lib/logger";
 import { z } from "zod";
 import {
@@ -17,7 +17,7 @@ const updateSchema = z.object({
 
 export async function GET() {
   const startTime = Date.now();
-  const supabase = createClient();
+  const supabase = createSupabaseServer();
 
   try {
     const {
@@ -45,7 +45,7 @@ export async function GET() {
 
 export async function PATCH(request: Request) {
   const startTime = Date.now();
-  const supabase = createClient();
+  const supabase = createSupabaseServer();
 
   try {
     const {
@@ -84,7 +84,7 @@ export async function PATCH(request: Request) {
 
 export async function POST(request: Request) {
   const startTime = Date.now();
-  const supabase = createClient();
+  const supabase = createSupabaseServer();
 
   try {
     const {

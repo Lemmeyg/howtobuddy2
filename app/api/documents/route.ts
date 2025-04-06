@@ -4,6 +4,10 @@ import { cookies } from "next/headers";
 import { z } from "zod";
 import { logError, logInfo } from "@/lib/logger";
 import { createDocumentSchema } from '@/lib/schemas';
+import { trackDocumentCreation } from "@/lib/usage";
+import { createValidationHandler } from '@/lib/middleware/validate-request';
+import { schemas } from '@/lib/validations/schemas';
+import { cache, invalidateCache } from '@/lib/cache';
 
 const querySchema = z.object({
   status: z.enum(["all", "processing", "completed", "error"]).optional(),
@@ -16,7 +20,7 @@ const querySchema = z.object({
   to: z.string().optional(),
 });
 
-export async function GET(request: Request) {
+export const GET = async (request: Request) => {
   try {
     const supabase = createRouteHandlerClient({ cookies });
     const { data: { session } } = await supabase.auth.getSession();
@@ -48,7 +52,9 @@ export async function GET(request: Request) {
     const { data: documents, error, count } = await query;
 
     if (error) {
-      console.error('Error fetching documents:', error);
+      await logError(error, {
+        userId: session.user.id,
+      });
       return NextResponse.json(
         { error: 'Failed to fetch documents' },
         { status: 500 }
@@ -65,67 +71,75 @@ export async function GET(request: Request) {
       },
     });
   } catch (error) {
-    console.error('Error in GET /api/documents:', error);
+    await logError(error as Error);
     return NextResponse.json(
       { error: 'Internal server error' },
       { status: 500 }
     );
   }
-}
+};
 
-export async function POST(request: Request) {
-  try {
-    const supabase = createRouteHandlerClient({ cookies });
-    const { data: { session } } = await supabase.auth.getSession();
+export const POST = createValidationHandler(schemas.document.create)(
+  async (request, data) => {
+    try {
+      const supabase = createRouteHandlerClient({ cookies });
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
 
-    if (!session) {
+      if (!session) {
+        return NextResponse.json(
+          { error: 'Unauthorized' },
+          { status: 401 }
+        );
+      }
+
+      const { data: document, error } = await supabase
+        .from('documents')
+        .insert({
+          user_id: session.user.id,
+          title: data.title,
+          content: data.content,
+          video_url: data.video_url,
+          template_id: data.template_id,
+          template_variables: data.template_variables,
+        })
+        .select()
+        .single();
+
+      if (error) {
+        await logError(error, {
+          userId: session.user.id,
+          documentData: data,
+        });
+        return NextResponse.json(
+          { error: 'Failed to create document' },
+          { status: 500 }
+        );
+      }
+
+      // Track document creation
+      await trackDocumentCreation(session.user.id);
+
+      // Track template usage if template was used
+      if (data.template_id) {
+        await supabase.rpc('track_template_usage', {
+          template_id: data.template_id,
+          document_id: document.id,
+          user_id: session.user.id,
+        });
+      }
+
+      // Invalidate user's document cache
+      await invalidateCache(`user:${session.user.id}`);
+
+      return NextResponse.json(document);
+    } catch (error) {
+      await logError(error as Error);
       return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      );
-    }
-
-    const body = await request.json();
-    const validatedData = createDocumentSchema.parse(body);
-
-    const { data: document, error } = await supabase
-      .from('documents')
-      .insert({
-        user_id: session.user.id,
-        title: validatedData.title,
-        video_url: validatedData.videoUrl,
-        status: 'pending',
-        metadata: {
-          skillLevel: validatedData.skillLevel,
-          outputType: validatedData.outputType,
-        },
-      })
-      .select()
-      .single();
-
-    if (error) {
-      console.error('Error creating document:', error);
-      return NextResponse.json(
-        { error: 'Failed to create document' },
+        { error: 'Internal server error' },
         { status: 500 }
       );
     }
-
-    // Trigger processing
-    await fetch(`${process.env.NEXT_PUBLIC_APP_URL}/api/documents/process`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ documentId: document.id }),
-    });
-
-    return NextResponse.json(document);
-  } catch (error) {
-    console.error('Error in POST /api/documents:', error);
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    );
   }
-} 
+); 

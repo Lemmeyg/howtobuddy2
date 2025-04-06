@@ -1,220 +1,147 @@
-import { Suspense } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { DocumentList } from "@/components/dashboard/document-list";
-import { createSupabaseServer } from "@/lib/supabase/server";
-import { FileText, Clock, AlertCircle, Plus, Upload, History } from "lucide-react";
+import { createServerComponentClient } from "@supabase/auth-helpers-nextjs";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { cookies } from 'next/headers';
-import DashboardError from "@/components/dashboard/error-boundary";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Plus, FileText, Video, Clock } from "lucide-react";
 import Link from "next/link";
-
-async function getStats() {
-  console.log('📊 Dashboard: Starting getStats');
-  
-  try {
-    // Check if we have a session cookie first
-    const cookieStore = cookies();
-    const hasSessionCookie = cookieStore.has('sb-access-token');
-    console.log('🍪 Dashboard: Session cookie present:', hasSessionCookie);
-
-    const supabase = createSupabaseServer();
-    console.log('🔐 Dashboard: Checking session');
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-
-    if (sessionError) {
-      console.error('❌ Dashboard: Session error:', sessionError);
-      throw new Error(`Failed to get session: ${sessionError.message}`);
-    }
-
-    if (!session) {
-      console.log('⚠️ Dashboard: No session found, redirecting to login');
-      redirect("/login");
-    }
-
-    console.log('✅ Dashboard: Session found for user:', session.user.id);
-
-    try {
-      const { data: documents, error: documentsError } = await supabase
-        .from("documents")
-        .select("*")
-        .eq("user_id", session.user.id)
-        .order("created_at", { ascending: false })
-        .limit(5);
-
-      if (documentsError) {
-        console.error("❌ Dashboard: Error fetching documents:", documentsError);
-        throw new Error(`Failed to fetch documents: ${documentsError.message}`);
-      }
-
-      console.log('📄 Dashboard: Successfully fetched documents');
-
-      // Calculate stats
-      const totalDocuments = documents?.length ?? 0;
-      const processingDocuments = documents?.filter(doc => doc.status === "processing").length ?? 0;
-      const errorDocuments = documents?.filter(doc => doc.status === "error").length ?? 0;
-
-      return {
-        totalDocuments,
-        processingDocuments,
-        errorDocuments,
-        recentDocuments: documents ?? [],
-      };
-    } catch (error) {
-      console.error('❌ Dashboard: Document fetch error:', error);
-      // Return empty stats instead of throwing
-      return {
-        totalDocuments: 0,
-        processingDocuments: 0,
-        errorDocuments: 0,
-        recentDocuments: [],
-      };
-    }
-  } catch (error) {
-    console.error('❌ Dashboard: Critical error:', error);
-    throw error;
-  }
-}
+import { formatDistanceToNow } from "date-fns";
+import { getSubscriptionLimits } from "@/lib/subscription";
+import { getUsageStats } from "@/lib/usage";
 
 export default async function DashboardPage() {
-  const stats = await getStats();
+  const supabase = createServerComponentClient({ cookies });
+
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+
+  if (!session) {
+    redirect("/login");
+  }
+
+  // Fetch user's documents
+  const { data: documents } = await supabase
+    .from("documents")
+    .select("*")
+    .eq("user_id", session.user.id)
+    .order("created_at", { ascending: false })
+    .limit(5);
+
+  // Fetch user's subscription and usage
+  const subscription = await getSubscriptionLimits(session.user.id);
+  const usage = await getUsageStats(session.user.id);
+
+  // Calculate usage percentages
+  const documentUsagePercent = Math.min(
+    (usage.documentsThisMonth / subscription.documentsPerMonth) * 100,
+    100
+  );
+  const videoUsagePercent = Math.min(
+    (usage.totalVideoDuration / subscription.maxVideoDuration) * 100,
+    100
+  );
 
   return (
-    <div className="space-y-8">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-3xl font-bold tracking-tight">Dashboard</h2>
-          <p className="text-muted-foreground">
-            Welcome back! Here's an overview of your documents.
-          </p>
+    <div className="container mx-auto py-8 space-y-8">
+      {/* Header */}
+      <div className="flex justify-between items-center">
+        <h1 className="text-3xl font-bold">Dashboard</h1>
+        <div className="space-x-4">
+          <Button asChild>
+            <Link href="/upload">
+              <Plus className="mr-2 h-4 w-4" />
+              New Document
+            </Link>
+          </Button>
         </div>
-        <Button asChild size="lg">
-          <Link href="/documents/new">
-            <Plus className="mr-2 h-5 w-5" />
-            New Document
-          </Link>
-        </Button>
       </div>
 
-      {/* Quick Actions */}
-      <div className="grid gap-4 md:grid-cols-3">
-        <Card className="hover:bg-muted/50 transition-colors cursor-pointer">
-          <Link href="/documents/new">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">
-                Create Document
-              </CardTitle>
-              <Plus className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground">
-                Start a new document from a video or template
-              </p>
-            </CardContent>
-          </Link>
-        </Card>
-
-        <Card className="hover:bg-muted/50 transition-colors cursor-pointer">
-          <Link href="/documents/upload">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">
-                Upload Video
-              </CardTitle>
-              <Upload className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground">
-                Upload a video file or paste a URL
-              </p>
-            </CardContent>
-          </Link>
-        </Card>
-
-        <Card className="hover:bg-muted/50 transition-colors cursor-pointer">
-          <Link href="/documents">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">
-                View All Documents
-              </CardTitle>
-              <History className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-muted-foreground">
-                Browse and manage all your documents
-              </p>
-            </CardContent>
-          </Link>
-        </Card>
-      </div>
-
-      {/* Stats Cards */}
-      <div className="grid gap-4 md:grid-cols-3">
+      {/* Usage Stats */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              Total Documents
-            </CardTitle>
-            <FileText className="h-4 w-4 text-muted-foreground" />
+          <CardHeader>
+            <CardTitle>Document Usage</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.totalDocuments}</div>
-            <p className="text-xs text-muted-foreground mt-1">
-              {stats.totalDocuments === 0 ? "No documents yet" : "Documents created"}
-            </p>
+            <div className="space-y-2">
+              <div className="flex justify-between">
+                <span>Documents this month</span>
+                <span>
+                  {usage.documentsThisMonth} / {subscription.documentsPerMonth}
+                </span>
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-2.5">
+                <div
+                  className="bg-blue-600 h-2.5 rounded-full"
+                  style={{ width: `${documentUsagePercent}%` }}
+                ></div>
+              </div>
+            </div>
           </CardContent>
         </Card>
 
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              Processing
-            </CardTitle>
-            <Clock className="h-4 w-4 text-muted-foreground" />
+          <CardHeader>
+            <CardTitle>Video Usage</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.processingDocuments}</div>
-            <p className="text-xs text-muted-foreground mt-1">
-              {stats.processingDocuments === 0 ? "No active processing" : "Documents being processed"}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              Errors
-            </CardTitle>
-            <AlertCircle className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.errorDocuments}</div>
-            <p className="text-xs text-muted-foreground mt-1">
-              {stats.errorDocuments === 0 ? "No errors found" : "Documents with errors"}
-            </p>
+            <div className="space-y-2">
+              <div className="flex justify-between">
+                <span>Video minutes used</span>
+                <span>
+                  {Math.round(usage.totalVideoDuration / 60)} / {Math.round(subscription.maxVideoDuration / 60)}
+                </span>
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-2.5">
+                <div
+                  className="bg-blue-600 h-2.5 rounded-full"
+                  style={{ width: `${videoUsagePercent}%` }}
+                ></div>
+              </div>
+            </div>
           </CardContent>
         </Card>
       </div>
 
       {/* Recent Documents */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h3 className="text-xl font-semibold">Recent Documents</h3>
-          {stats.totalDocuments > 0 && (
-            <Button variant="outline" asChild>
-              <Link href="/documents">View All</Link>
-            </Button>
+      <Card>
+        <CardHeader>
+          <CardTitle>Recent Documents</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {documents && documents.length > 0 ? (
+            <div className="space-y-4">
+              {documents.map((doc) => (
+                <div
+                  key={doc.id}
+                  className="flex items-center justify-between p-4 border rounded-lg"
+                >
+                  <div className="flex items-center space-x-4">
+                    <FileText className="h-6 w-6" />
+                    <div>
+                      <h3 className="font-medium">{doc.title}</h3>
+                      <p className="text-sm text-gray-500">
+                        Created {formatDistanceToNow(new Date(doc.created_at))} ago
+                      </p>
+                    </div>
+                  </div>
+                  <Button variant="outline" asChild>
+                    <Link href={`/documents/${doc.id}`}>View</Link>
+                  </Button>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-8">
+              <p className="text-gray-500">No documents yet</p>
+              <Button className="mt-4" asChild>
+                <Link href="/upload">Create your first document</Link>
+              </Button>
+            </div>
           )}
-        </div>
-        <Suspense fallback={<DocumentList documents={[]} isLoading />}>
-          <DocumentList 
-            documents={stats.recentDocuments} 
-            emptyMessage="No documents yet. Create your first document to get started!"
-          />
-        </Suspense>
-      </div>
+        </CardContent>
+      </Card>
     </div>
   );
-}
-
-// Add error boundary
-export const error = DashboardError; 
+} 

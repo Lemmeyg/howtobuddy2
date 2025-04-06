@@ -2,47 +2,42 @@ import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 import { processVideo } from "@/lib/video-processing";
+import { trackVideoProcessing } from "@/lib/usage";
 import { logError, logInfo } from "@/lib/logger";
 
 export async function POST(request: Request) {
   try {
     const supabase = createRouteHandlerClient({ cookies });
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
 
-    // Verify session
-    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-    if (sessionError || !session) {
+    if (!session) {
       return NextResponse.json(
         { error: "Unauthorized" },
         { status: 401 }
       );
     }
 
-    // Get document ID from request
     const { documentId } = await request.json();
-    if (!documentId) {
-      return NextResponse.json(
-        { error: "Document ID is required" },
-        { status: 400 }
-      );
-    }
 
-    // Get document details
-    const { data: document, error: fetchError } = await supabase
+    // Get document
+    const { data: document, error: documentError } = await supabase
       .from("documents")
       .select("*")
       .eq("id", documentId)
       .eq("user_id", session.user.id)
       .single();
 
-    if (fetchError || !document) {
-      logError("Error fetching document", { documentId, error: fetchError });
+    if (documentError || !document) {
+      logError("Error fetching document", { documentId, error: documentError });
       return NextResponse.json(
         { error: "Document not found" },
         { status: 404 }
       );
     }
 
-    // Update document status to processing
+    // Update status to processing
     const { error: updateError } = await supabase
       .from("documents")
       .update({ status: "processing" })
@@ -58,38 +53,23 @@ export async function POST(request: Request) {
 
     try {
       // Process video
-      const result = await processVideo({
-        videoUrl: document.video_url,
-        skillLevel: document.metadata?.skillLevel,
-        outputType: document.metadata?.outputType,
+      const processed = await processVideo(document.video_url, {
+        skillLevel: document.metadata?.skillLevel || "beginner",
+        outputType: document.metadata?.outputType || "summary",
       });
-
-      if (result.error) {
-        // Update document with error
-        await supabase
-          .from("documents")
-          .update({
-            status: "error",
-            error_message: result.error,
-          })
-          .eq("id", documentId);
-
-        return NextResponse.json(
-          { error: result.error },
-          { status: 500 }
-        );
-      }
 
       // Update document with processed content
       const { error: finalUpdateError } = await supabase
         .from("documents")
         .update({
-          content: result.content,
+          content: processed.content,
+          status: "completed",
           metadata: {
             ...document.metadata,
-            ...result.metadata,
+            duration: processed.metadata.duration,
+            wordCount: processed.metadata.wordCount,
+            confidence: processed.metadata.confidence,
           },
-          status: "completed",
           completed_at: new Date().toISOString(),
         })
         .eq("id", documentId);
@@ -102,6 +82,9 @@ export async function POST(request: Request) {
         );
       }
 
+      // Track video processing
+      await trackVideoProcessing(session.user.id, processed.metadata.duration);
+
       logInfo("Document processing completed", { documentId });
 
       return NextResponse.json({
@@ -109,15 +92,11 @@ export async function POST(request: Request) {
         documentId,
       });
     } catch (error) {
-      // Update document status to error
+      console.error("Error processing video:", error);
       await supabase
         .from("documents")
-        .update({
-          status: "error",
-          error_message: error instanceof Error ? error.message : "Unknown error",
-        })
+        .update({ status: "error" })
         .eq("id", documentId);
-
       throw error;
     }
   } catch (error) {

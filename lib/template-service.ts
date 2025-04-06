@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { createSupabaseServer } from "@/lib/supabase/server";
 import { logInfo, logError } from "@/lib/logger";
 import {
   Template,
@@ -12,7 +12,7 @@ export async function createTemplate(
   userId: string,
   data: Omit<Template, "id" | "version" | "userId" | "createdAt" | "updatedAt">
 ): Promise<Template> {
-  const supabase = createClient();
+  const supabase = createSupabaseServer();
 
   try {
     const { data: template, error } = await supabase
@@ -43,7 +43,7 @@ export async function updateTemplate(
   userId: string,
   data: Partial<Omit<Template, "id" | "userId" | "createdAt" | "updatedAt">>
 ): Promise<Template> {
-  const supabase = createClient();
+  const supabase = createSupabaseServer();
 
   try {
     // Get current template
@@ -101,7 +101,7 @@ export async function deleteTemplate(
   templateId: string,
   userId: string
 ): Promise<void> {
-  const supabase = createClient();
+  const supabase = createSupabaseServer();
 
   try {
     const { error } = await supabase
@@ -123,7 +123,7 @@ export async function getTemplate(
   templateId: string,
   userId: string
 ): Promise<Template | null> {
-  const supabase = createClient();
+  const supabase = createSupabaseServer();
 
   try {
     const { data: template, error } = await supabase
@@ -156,7 +156,7 @@ export async function listTemplates(
     offset?: number;
   } = {}
 ): Promise<Template[]> {
-  const supabase = createClient();
+  const supabase = createSupabaseServer();
 
   try {
     let query = supabase
@@ -196,7 +196,7 @@ export async function getTemplateVersion(
   version: number,
   userId: string
 ): Promise<TemplateVersion | null> {
-  const supabase = createClient();
+  const supabase = createSupabaseServer();
 
   try {
     const { data: templateVersion, error } = await supabase
@@ -231,7 +231,7 @@ export async function recordTemplateUsage(
   documentId: string,
   variables: Record<string, string>
 ): Promise<TemplateUsage> {
-  const supabase = createClient();
+  const supabase = createSupabaseServer();
 
   try {
     const { data: usage, error } = await supabase

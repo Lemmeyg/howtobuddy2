@@ -4,7 +4,7 @@ const nextConfig = {
   swcMinify: true,
   distDir: '.next',
   experimental: {
-    typedRoutes: true
+    // Remove deprecated flags
   },
   images: {
     domains: ['localhost'],
@@ -22,6 +22,13 @@ const nextConfig = {
       },
     });
     return config;
+  },
+  // Add proper error handling
+  onDemandEntries: {
+    // period (in ms) where the server will keep pages in the buffer
+    maxInactiveAge: 25 * 1000,
+    // number of pages that should be kept simultaneously without being disposed
+    pagesBufferLength: 2,
   },
 }
 

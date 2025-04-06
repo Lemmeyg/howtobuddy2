@@ -1,12 +1,20 @@
-import { pino } from "pino";
+import pino from "pino";
 
+// Create a logger instance that works in both Node.js and Edge environments
 const logger = pino({
-  transport: {
-    target: "pino-pretty",
-    options: {
-      colorize: true,
-      translateTime: "SYS:standard",
+  browser: {
+    write: (o) => {
+      if (typeof o === "string") {
+        console.log(o);
+      } else {
+        console.log(JSON.stringify(o));
+      }
     },
+  },
+  level: process.env.NODE_ENV === "production" ? "info" : "debug",
+  base: {
+    env: process.env.NODE_ENV,
+    version: process.env.NEXT_PUBLIC_APP_VERSION,
   },
 });
 
@@ -20,20 +28,35 @@ export interface LogContext {
   [key: string]: any;
 }
 
-export function logInfo(message: string, context: LogContext = {}) {
-  logger.info({ ...context, timestamp: new Date().toISOString() }, message);
-}
+export const logInfo = (message: string, context?: Record<string, any>) => {
+  logger.info(context || {}, message);
+};
 
-export function logError(message: string, context: LogContext = {}) {
-  if (context.error) {
-    context.error = {
-      message: context.error.message,
-      stack: context.error.stack,
-      name: context.error.name,
-    };
+export const logError = (error: Error, context?: Record<string, any>) => {
+  if (error instanceof Error) {
+    logger.error(
+      {
+        ...context,
+        error: {
+          message: error.message,
+          stack: error.stack,
+          name: error.name,
+        },
+      },
+      error.message
+    );
+  } else {
+    logger.error(context || {}, String(error));
   }
-  logger.error({ ...context, timestamp: new Date().toISOString() }, message);
-}
+};
+
+export const logWarning = (message: string, context?: Record<string, any>) => {
+  logger.warn(context || {}, message);
+};
+
+export const logDebug = (message: string, context?: Record<string, any>) => {
+  logger.debug(context || {}, message);
+};
 
 export function logRequest(request: Request, duration: number, context: LogContext = {}) {
   const url = new URL(request.url);

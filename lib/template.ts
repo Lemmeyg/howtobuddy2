@@ -1,118 +1,185 @@
 import { z } from "zod";
+import { createClient } from "@supabase/supabase-js";
+import { logError, logInfo } from "@/lib/logger";
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
 
 export const TemplateType = {
   SUMMARY: "summary",
+  TUTORIAL: "tutorial",
+  CHEATSHEET: "cheatsheet",
   TRANSCRIPT: "transcript",
-  NOTES: "notes",
-  CUSTOM: "custom",
 } as const;
 
 export type TemplateType = typeof TemplateType[keyof typeof TemplateType];
 
 export const templateSchema = z.object({
   id: z.string().uuid(),
-  name: z.string().min(1).max(100),
-  description: z.string().max(500),
-  type: z.enum([
-    TemplateType.SUMMARY,
-    TemplateType.TRANSCRIPT,
-    TemplateType.NOTES,
-    TemplateType.CUSTOM,
-  ]),
+  user_id: z.string().uuid(),
+  name: z.string().min(1),
+  type: z.enum([TemplateType.SUMMARY, TemplateType.TUTORIAL, TemplateType.CHEATSHEET, TemplateType.TRANSCRIPT]),
   content: z.string(),
-  variables: z.array(
-    z.object({
-      name: z.string(),
-      description: z.string(),
-      required: z.boolean(),
-      defaultValue: z.string().optional(),
-    })
-  ),
+  variables: z.array(z.string()),
+  is_public: z.boolean(),
   version: z.number(),
-  isPublic: z.boolean(),
-  userId: z.string().uuid(),
-  createdAt: z.string().datetime(),
-  updatedAt: z.string().datetime(),
+  created_at: z.string().datetime(),
+  updated_at: z.string().datetime(),
 });
 
 export type Template = z.infer<typeof templateSchema>;
 
-export const templateVersionSchema = z.object({
-  id: z.string().uuid(),
-  templateId: z.string().uuid(),
-  version: z.number(),
-  content: z.string(),
-  variables: z.array(
-    z.object({
-      name: z.string(),
-      description: z.string(),
-      required: z.boolean(),
-      defaultValue: z.string().optional(),
-    })
-  ),
-  createdAt: z.string().datetime(),
-});
-
-export type TemplateVersion = z.infer<typeof templateVersionSchema>;
-
-export interface TemplateUsage {
-  id: string;
-  templateId: string;
-  userId: string;
-  documentId: string;
-  variables: Record<string, string>;
-  createdAt: string;
+export interface TemplateVariable {
+  name: string;
+  type: "text" | "number" | "boolean" | "select";
+  required: boolean;
+  options?: string[];
+  defaultValue?: string | number | boolean;
 }
 
-export function validateTemplateVariables(
-  template: Template,
-  variables: Record<string, string>
-): { isValid: boolean; errors: string[] } {
-  const errors: string[] = [];
+export async function createTemplate(
+  userId: string,
+  template: Omit<Template, "id" | "user_id" | "created_at" | "updated_at" | "version">
+) {
+  try {
+    const { data, error } = await supabase
+      .from("templates")
+      .insert({
+        ...template,
+        user_id: userId,
+        version: 1,
+      })
+      .select()
+      .single();
 
-  // Check required variables
-  template.variables.forEach((variable) => {
-    if (variable.required && !variables[variable.name]) {
-      errors.push(`Missing required variable: ${variable.name}`);
-    }
-  });
+    if (error) throw error;
 
-  // Check for unknown variables
-  Object.keys(variables).forEach((variableName) => {
-    if (!template.variables.find((v) => v.name === variableName)) {
-      errors.push(`Unknown variable: ${variableName}`);
-    }
-  });
-
-  return {
-    isValid: errors.length === 0,
-    errors,
-  };
+    logInfo("Template created", { templateId: data.id });
+    return data;
+  } catch (error) {
+    logError("Error creating template", { error });
+    throw error;
+  }
 }
 
-export function renderTemplate(
-  template: Template,
-  variables: Record<string, string>
-): string {
-  let content = template.content;
+export async function updateTemplate(
+  userId: string,
+  templateId: string,
+  updates: Partial<Omit<Template, "id" | "user_id" | "created_at" | "updated_at">>
+) {
+  try {
+    const { data: existingTemplate, error: fetchError } = await supabase
+      .from("templates")
+      .select("*")
+      .eq("id", templateId)
+      .eq("user_id", userId)
+      .single();
 
-  // Replace variables in content
-  Object.entries(variables).forEach(([key, value]) => {
-    const regex = new RegExp(`{{${key}}}`, "g");
-    content = content.replace(regex, value);
-  });
+    if (fetchError) throw fetchError;
 
-  return content;
+    const { data, error } = await supabase
+      .from("templates")
+      .update({
+        ...updates,
+        version: existingTemplate.version + 1,
+      })
+      .eq("id", templateId)
+      .eq("user_id", userId)
+      .select()
+      .single();
+
+    if (error) throw error;
+
+    logInfo("Template updated", { templateId });
+    return data;
+  } catch (error) {
+    logError("Error updating template", { error });
+    throw error;
+  }
 }
 
-export function getDefaultVariables(template: Template): Record<string, string> {
-  const defaults: Record<string, string> = {};
+export async function deleteTemplate(userId: string, templateId: string) {
+  try {
+    const { error } = await supabase
+      .from("templates")
+      .delete()
+      .eq("id", templateId)
+      .eq("user_id", userId);
 
-  template.variables.forEach((variable) => {
-    if (variable.defaultValue) {
-      defaults[variable.name] = variable.defaultValue;
+    if (error) throw error;
+
+    logInfo("Template deleted", { templateId });
+  } catch (error) {
+    logError("Error deleting template", { error });
+    throw error;
+  }
+}
+
+export async function getTemplate(userId: string, templateId: string) {
+  try {
+    const { data, error } = await supabase
+      .from("templates")
+      .select("*")
+      .eq("id", templateId)
+      .eq("user_id", userId)
+      .single();
+
+    if (error) throw error;
+
+    return data;
+  } catch (error) {
+    logError("Error fetching template", { error });
+    throw error;
+  }
+}
+
+export async function listTemplates(userId: string, options?: { isPublic?: boolean }) {
+  try {
+    let query = supabase
+      .from("templates")
+      .select("*")
+      .or(`user_id.eq.${userId},is_public.eq.true`);
+
+    if (options?.isPublic !== undefined) {
+      query = query.eq("is_public", options.isPublic);
     }
-  });
 
-  return defaults;
+    const { data, error } = await query;
+
+    if (error) throw error;
+
+    return data;
+  } catch (error) {
+    logError("Error listing templates", { error });
+    throw error;
+  }
+}
+
+export function parseTemplateVariables(content: string): TemplateVariable[] {
+  const variableRegex = /\{\{([^}]+)\}\}/g;
+  const matches = content.matchAll(variableRegex);
+  const variables: TemplateVariable[] = [];
+
+  for (const match of matches) {
+    const [_, variable] = match;
+    const [name, type = "text", required = "true", options] = variable.split(":");
+
+    variables.push({
+      name,
+      type: type as TemplateVariable["type"],
+      required: required === "true",
+      options: options ? options.split(",") : undefined,
+    });
+  }
+
+  return variables;
+}
+
+export function renderTemplate(content: string, variables: Record<string, any>): string {
+  return content.replace(/\{\{([^}]+)\}\}/g, (match, variable) => {
+    const [name] = variable.split(":");
+    return variables[name]?.toString() || match;
+  });
 } 

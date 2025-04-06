@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createSupabaseServer } from "@/lib/supabase/server";
 import { createSubscriptionCheckoutSession } from "@/lib/stripe";
 import { logRequest, logResponse } from "@/lib/logger";
 import { z } from "zod";
@@ -11,7 +11,7 @@ const checkoutSchema = z.object({
 
 export async function POST(request: Request) {
   const startTime = Date.now();
-  const supabase = createClient();
+  const supabase = createSupabaseServer();
 
   try {
     // Get user session

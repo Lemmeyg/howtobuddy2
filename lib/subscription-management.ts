@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { createSupabaseServer } from "@/lib/supabase/server";
 import { logInfo, logError } from "@/lib/logger";
 import { Subscription, SubscriptionTier, SubscriptionInterval, subscriptionSchema } from "./subscription";
 import { z } from "zod";
@@ -10,7 +10,7 @@ const subscriptionUpdateSchema = z.object({
 });
 
 export async function getUserSubscription(userId: string): Promise<Subscription | null> {
-  const supabase = createClient();
+  const supabase = createSupabaseServer();
 
   try {
     const { data: subscription, error } = await supabase
@@ -37,7 +37,7 @@ export async function updateSubscription(
   userId: string,
   updates: z.infer<typeof subscriptionUpdateSchema>
 ): Promise<Subscription> {
-  const supabase = createClient();
+  const supabase = createSupabaseServer();
 
   try {
     const { data: subscription, error } = await supabase
@@ -59,7 +59,7 @@ export async function updateSubscription(
 }
 
 export async function cancelSubscription(userId: string): Promise<Subscription> {
-  const supabase = createClient();
+  const supabase = createSupabaseServer();
 
   try {
     const { data: subscription, error } = await supabase
@@ -84,7 +84,7 @@ export async function cancelSubscription(userId: string): Promise<Subscription> 
 }
 
 export async function reactivateSubscription(userId: string): Promise<Subscription> {
-  const supabase = createClient();
+  const supabase = createSupabaseServer();
 
   try {
     const { data: subscription, error } = await supabase

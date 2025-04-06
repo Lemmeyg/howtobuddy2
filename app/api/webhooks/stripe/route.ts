@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient } from "@/lib/supabase/server";
+import { createSupabaseServer } from "@/lib/supabase/server";
 import { logRequest, logResponse } from "@/lib/logger";
 import { headers } from "next/headers";
 import Stripe from "stripe";
@@ -47,7 +47,7 @@ export async function POST(request: Request) {
       webhookSecret
     );
 
-    const supabase = createClient();
+    const supabase = createSupabaseServer();
 
     switch (event.type) {
       case "customer.subscription.created":

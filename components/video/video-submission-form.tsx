@@ -30,7 +30,10 @@ import { TranscriptionOptions } from "@/lib/assemblyai/service";
 
 // Form schema
 const formSchema = z.object({
-  videoUrl: z.string().url("Please enter a valid URL"),
+  videoUrl: z.string().url('Invalid URL').refine(
+    (url) => url.includes('youtube.com') || url.includes('youtu.be'),
+    'Only YouTube URLs are supported'
+  ),
   languageCode: z.string().optional(),
   speakerDiarization: z.boolean().optional(),
   punctuate: z.boolean().optional(),
@@ -39,6 +42,8 @@ const formSchema = z.object({
   filterProfanity: z.boolean().optional(),
   customVocabulary: z.array(z.string()).optional(),
   customSpelling: z.record(z.string(), z.string()).optional(),
+  skillLevel: z.enum(['beginner', 'intermediate', 'advanced']).optional(),
+  outputType: z.enum(['tutorial', 'guide', 'reference']).optional(),
 });
 
 type FormValues = z.infer<typeof formSchema>;
@@ -64,6 +69,8 @@ export function VideoSubmissionForm() {
       filterProfanity: false,
       customVocabulary: [],
       customSpelling: {},
+      skillLevel: 'intermediate',
+      outputType: 'tutorial',
     },
   });
 
@@ -148,10 +155,10 @@ export function VideoSubmissionForm() {
             name="videoUrl"
             render={({ field }) => (
               <FormItem>
-                <FormLabel>Video URL</FormLabel>
+                <FormLabel>YouTube Video URL</FormLabel>
                 <FormControl>
                   <Input
-                    placeholder="Enter video URL"
+                    placeholder="https://www.youtube.com/watch?v=..."
                     {...field}
                     disabled={isSubmitting}
                   />
@@ -400,6 +407,62 @@ export function VideoSubmissionForm() {
                 </div>
               </div>
             </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <FormField
+              control={form.control}
+              name="skillLevel"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Skill Level</FormLabel>
+                  <Select
+                    onValueChange={field.onChange}
+                    defaultValue={field.value}
+                    disabled={isSubmitting}
+                  >
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select skill level" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="beginner">Beginner</SelectItem>
+                      <SelectItem value="intermediate">Intermediate</SelectItem>
+                      <SelectItem value="advanced">Advanced</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="outputType"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Output Type</FormLabel>
+                  <Select
+                    onValueChange={field.onChange}
+                    defaultValue={field.value}
+                    disabled={isSubmitting}
+                  >
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="Select output type" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent>
+                      <SelectItem value="tutorial">Tutorial</SelectItem>
+                      <SelectItem value="guide">Guide</SelectItem>
+                      <SelectItem value="reference">Reference</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
           </div>
 
           {error && (

@@ -3,142 +3,149 @@
 import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { Loader2, CheckCircle2, AlertCircle, Clock } from "lucide-react";
-import { useToast } from "@/components/ui/use-toast";
+import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { Loader2 } from "lucide-react";
+import { formatDuration } from "@/lib/utils";
 
 interface TranscriptionProgressProps {
   documentId: string;
   onComplete?: () => void;
 }
 
-interface TranscriptionStatus {
-  status: "processing" | "completed" | "error";
+interface ProcessingJob {
+  id: string;
+  status: "pending" | "processing" | "completed" | "error";
   progress: number;
-  error?: string;
-  metadata?: {
-    audio_duration?: number;
-    word_count?: number;
-    confidence?: number;
+  status_message: string;
+  error_message?: string;
+  created_at: string;
+}
+
+interface Document {
+  id: string;
+  title: string;
+  video_url: string;
+  status: "pending" | "processing" | "completed" | "error";
+  metadata: {
+    videoInfo?: {
+      title: string;
+      channelTitle: string;
+      duration: number;
+    };
   };
 }
 
-export function TranscriptionProgress({
-  documentId,
-  onComplete,
-}: TranscriptionProgressProps) {
-  const { toast } = useToast();
-  const [status, setStatus] = useState<TranscriptionStatus>({
-    status: "processing",
-    progress: 0,
-  });
+export function TranscriptionProgress({ documentId, onComplete }: TranscriptionProgressProps) {
+  const [job, setJob] = useState<ProcessingJob | null>(null);
+  const [document, setDocument] = useState<Document | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const supabase = createClientComponentClient();
 
   useEffect(() => {
-    let interval: NodeJS.Timeout;
-
-    const checkStatus = async () => {
+    const fetchData = async () => {
       try {
-        const response = await fetch(`/api/documents/${documentId}`);
-        const data = await response.json();
+        // Fetch document details
+        const { data: doc, error: docError } = await supabase
+          .from("documents")
+          .select("*")
+          .eq("id", documentId)
+          .single();
 
-        if (!response.ok) {
-          throw new Error(data.error || "Failed to fetch status");
-        }
+        if (docError) throw docError;
+        setDocument(doc);
 
-        const newStatus: TranscriptionStatus = {
-          status: data.status,
-          progress: data.status === "completed" ? 100 : 50,
-          error: data.error_message,
-          metadata: data.metadata,
-        };
+        // Fetch processing job
+        const { data: jobs, error: jobError } = await supabase
+          .from("processing_jobs")
+          .select("*")
+          .eq("document_id", documentId)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .single();
 
-        setStatus(newStatus);
-
-        if (newStatus.status === "completed") {
-          clearInterval(interval);
-          toast({
-            title: "Success",
-            description: "Transcription completed successfully",
-          });
-          onComplete?.();
-        } else if (newStatus.status === "error") {
-          clearInterval(interval);
-          toast({
-            title: "Error",
-            description: newStatus.error || "Transcription failed",
-            variant: "destructive",
-          });
-        }
+        if (jobError) throw jobError;
+        setJob(jobs);
       } catch (error) {
-        console.error("Error checking status:", error);
-        clearInterval(interval);
+        setError(error instanceof Error ? error.message : "Failed to fetch progress");
       }
     };
 
-    interval = setInterval(checkStatus, 3000);
-    checkStatus();
+    fetchData();
 
-    return () => clearInterval(interval);
-  }, [documentId, onComplete, toast]);
+    // Set up real-time subscription
+    const channel = supabase
+      .channel(`processing_jobs:${documentId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "processing_jobs",
+          filter: `document_id=eq.${documentId}`,
+        },
+        (payload) => {
+          setJob(payload.new as ProcessingJob);
+          if (payload.new.status === "completed") {
+            onComplete?.();
+          }
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [documentId, supabase, onComplete]);
+
+  if (error) {
+    return (
+      <Card className="p-4">
+        <div className="text-red-500">{error}</div>
+      </Card>
+    );
+  }
+
+  if (!job || !document) {
+    return (
+      <Card className="p-4">
+        <div className="flex items-center justify-center">
+          <Loader2 className="h-6 w-6 animate-spin" />
+        </div>
+      </Card>
+    );
+  }
+
+  const videoInfo = document.metadata?.videoInfo;
 
   return (
-    <Card className="p-6">
+    <Card className="p-4">
       <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            {status.status === "processing" && (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                <span className="font-medium">Processing video...</span>
-              </>
-            )}
-            {status.status === "completed" && (
-              <>
-                <CheckCircle2 className="h-4 w-4 text-green-600" />
-                <span className="font-medium text-green-600">Completed</span>
-              </>
-            )}
-            {status.status === "error" && (
-              <>
-                <AlertCircle className="h-4 w-4 text-red-600" />
-                <span className="font-medium text-red-600">Failed</span>
-              </>
-            )}
-          </div>
-          <span className="text-sm text-muted-foreground">
-            {status.progress}%
-          </span>
+        <div>
+          <h3 className="font-medium">Processing Video</h3>
+          {videoInfo && (
+            <p className="text-sm text-muted-foreground">
+              {videoInfo.title} ({formatDuration(videoInfo.duration)})
+            </p>
+          )}
         </div>
 
-        <Progress value={status.progress} className="h-2" />
+        <div className="space-y-2">
+          <div className="flex justify-between text-sm">
+            <span>{job.status_message}</span>
+            <span>{job.progress}%</span>
+          </div>
+          <Progress value={job.progress} />
+        </div>
 
-        {status.metadata && (
-          <div className="grid grid-cols-2 gap-4 text-sm">
-            {status.metadata.audio_duration && (
-              <div className="flex items-center space-x-2">
-                <Clock className="h-4 w-4 text-muted-foreground" />
-                <span>
-                  Duration: {Math.round(status.metadata.audio_duration / 60)}m{" "}
-                  {Math.round(status.metadata.audio_duration % 60)}s
-                </span>
-              </div>
-            )}
-            {status.metadata.word_count && (
-              <div>
-                Words: {status.metadata.word_count.toLocaleString()}
-              </div>
-            )}
-            {status.metadata.confidence && (
-              <div>
-                Confidence: {Math.round(status.metadata.confidence * 100)}%
-              </div>
-            )}
+        {job.status === "error" && (
+          <div className="text-sm text-red-500">
+            {job.error_message || "An error occurred during processing"}
           </div>
         )}
 
-        {status.error && (
-          <div className="flex items-center space-x-2 text-sm text-red-600">
-            <AlertCircle className="h-4 w-4" />
-            <span>{status.error}</span>
+        {job.status === "completed" && (
+          <div className="text-sm text-green-500">
+            Processing completed successfully
           </div>
         )}
       </div>

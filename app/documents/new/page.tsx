@@ -2,216 +2,146 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { useForm } from "react-hook-form";
-import * as z from "zod";
+import { Template, TemplateType, renderTemplate } from "@/lib/template";
+import { TemplateSelector } from "@/components/template/template-selector";
 import { Button } from "@/components/ui/button";
-import {
-  Form,
-  FormControl,
-  FormDescription,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from "@/components/ui/form";
 import { Input } from "@/components/ui/input";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { AlertCircle, Link as LinkIcon, Upload } from "lucide-react";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
-
-const urlSchema = z.object({
-  url: z
-    .string()
-    .min(1, "URL is required")
-    .url("Please enter a valid URL")
-    .refine(
-      (url) => {
-        // Basic validation for common video platforms
-        return (
-          url.includes("youtube.com") ||
-          url.includes("youtu.be") ||
-          url.includes("vimeo.com")
-        );
-      },
-      {
-        message: "Please enter a valid YouTube or Vimeo URL",
-      }
-    ),
-  title: z
-    .string()
-    .min(1, "Title is required")
-    .max(100, "Title must be less than 100 characters"),
-});
+import { Textarea } from "@/components/ui/textarea";
+import { useToast } from "@/components/ui/use-toast";
+import { createRouteHandlerClient } from "@supabase/auth-helpers-nextjs";
+import { cookies } from "next/headers";
 
 export default function NewDocumentPage() {
-  const router = useRouter();
+  const [title, setTitle] = useState("");
+  const [content, setContent] = useState("");
+  const [videoUrl, setVideoUrl] = useState("");
+  const [selectedTemplate, setSelectedTemplate] = useState<Template | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const supabase = createClientComponentClient();
+  const { toast } = useToast();
+  const router = useRouter();
 
-  const form = useForm<z.infer<typeof urlSchema>>({
-    resolver: zodResolver(urlSchema),
-    defaultValues: {
-      url: "",
-      title: "",
-    },
-  });
+  const handleTemplateSelect = async (template: Template, variables: Record<string, any>) => {
+    try {
+      const renderedContent = renderTemplate(template.content, variables);
+      setContent(renderedContent);
+      setSelectedTemplate(template);
+      toast({
+        title: "Success",
+        description: "Template applied successfully",
+      });
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to apply template",
+        variant: "destructive",
+      });
+    }
+  };
 
-  async function onSubmit(values: z.infer<typeof urlSchema>) {
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
     setIsSubmitting(true);
-    setError(null);
 
     try {
-      // First verify the session
-      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
-      
-      if (sessionError || !session) {
-        throw new Error("Please sign in to create a document");
+      const supabase = createRouteHandlerClient({ cookies });
+      const { data: { session } } = await supabase.auth.getSession();
+
+      if (!session) {
+        throw new Error("Not authenticated");
       }
 
-      // Create the document
-      const response = await fetch("/api/documents", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          url: values.url,
-          title: values.title,
-        }),
+      const { data: document, error } = await supabase
+        .from("documents")
+        .insert({
+          title,
+          content,
+          video_url: videoUrl,
+          user_id: session.user.id,
+          template_id: selectedTemplate?.id,
+        })
+        .select()
+        .single();
+
+      if (error) throw error;
+
+      toast({
+        title: "Success",
+        description: "Document created successfully",
       });
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to create document");
-      }
-
-      // Redirect to the document page
-      router.push(`/documents/${data.documentId}`);
-    } catch (error: any) {
-      console.error("Error creating document:", error);
-      setError(error.message || "Failed to create document");
+      router.push(`/documents/${document.id}`);
+    } catch (error) {
+      toast({
+        title: "Error",
+        description: "Failed to create document",
+        variant: "destructive",
+      });
     } finally {
       setIsSubmitting(false);
     }
-  }
+  };
 
   return (
-    <div className="max-w-2xl mx-auto py-8 space-y-8">
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">Create New Document</h1>
-        <p className="text-muted-foreground mt-2">
-          Convert a video into a well-structured document.
-        </p>
-      </div>
+    <div className="container mx-auto py-10">
+      <h1 className="text-3xl font-bold mb-8">New Document</h1>
 
-      <Tabs defaultValue="url" className="w-full">
-        <TabsList className="grid w-full grid-cols-2">
-          <TabsTrigger value="url" className="flex items-center gap-2">
-            <LinkIcon className="h-4 w-4" />
-            Video URL
-          </TabsTrigger>
-          <TabsTrigger value="upload" className="flex items-center gap-2" disabled>
-            <Upload className="h-4 w-4" />
-            Upload File
-          </TabsTrigger>
-        </TabsList>
+      <form onSubmit={handleSubmit} className="space-y-8">
+        <div className="space-y-4">
+          <div>
+            <label htmlFor="title" className="block text-sm font-medium mb-2">
+              Title
+            </label>
+            <Input
+              id="title"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Enter document title"
+              required
+            />
+          </div>
 
-        <TabsContent value="url" className="mt-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Add Video URL</CardTitle>
-              <CardDescription>
-                Enter a YouTube or Vimeo video URL to create a document.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {error && (
-                <Alert variant="destructive" className="mb-4">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertTitle>Error</AlertTitle>
-                  <AlertDescription>{error}</AlertDescription>
-                </Alert>
-              )}
+          <div>
+            <label htmlFor="videoUrl" className="block text-sm font-medium mb-2">
+              Video URL
+            </label>
+            <Input
+              id="videoUrl"
+              value={videoUrl}
+              onChange={(e) => setVideoUrl(e.target.value)}
+              placeholder="Enter YouTube or Vimeo URL"
+              required
+            />
+          </div>
 
-              <Form {...form}>
-                <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-                  <FormField
-                    control={form.control}
-                    name="url"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Video URL</FormLabel>
-                        <FormControl>
-                          <Input 
-                            placeholder="https://youtube.com/watch?v=..." 
-                            {...field}
-                            disabled={isSubmitting}
-                          />
-                        </FormControl>
-                        <FormDescription>
-                          Paste a YouTube or Vimeo video URL
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+          <div>
+            <label className="block text-sm font-medium mb-2">
+              Template
+            </label>
+            <TemplateSelector
+              onTemplateSelect={handleTemplateSelect}
+              type={TemplateType.SUMMARY}
+            />
+          </div>
 
-                  <FormField
-                    control={form.control}
-                    name="title"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Document Title</FormLabel>
-                        <FormControl>
-                          <Input 
-                            placeholder="Enter a title for your document" 
-                            {...field}
-                            disabled={isSubmitting}
-                          />
-                        </FormControl>
-                        <FormDescription>
-                          This will be the title of your generated document
-                        </FormDescription>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
+          <div>
+            <label htmlFor="content" className="block text-sm font-medium mb-2">
+              Content
+            </label>
+            <Textarea
+              id="content"
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              placeholder="Enter document content"
+              className="min-h-[300px]"
+              required
+            />
+          </div>
+        </div>
 
-                  <div className="flex gap-4">
-                    <Button type="submit" disabled={isSubmitting}>
-                      {isSubmitting ? "Creating..." : "Create Document"}
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={() => router.back()}
-                      disabled={isSubmitting}
-                    >
-                      Cancel
-                    </Button>
-                  </div>
-                </form>
-              </Form>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="upload" className="mt-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Upload Video</CardTitle>
-              <CardDescription>
-                Coming soon! You'll be able to upload video files directly.
-              </CardDescription>
-            </CardHeader>
-          </Card>
-        </TabsContent>
-      </Tabs>
+        <Button type="submit" disabled={isSubmitting}>
+          {isSubmitting ? "Creating..." : "Create Document"}
+        </Button>
+      </form>
     </div>
   );
 } 

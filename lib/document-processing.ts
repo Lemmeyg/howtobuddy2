@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import { createSupabaseServer } from "@/lib/supabase/server";
 import { submitTranscriptRequest, pollTranscriptStatus } from "@/lib/assemblyai";
 import { generateSummary } from "@/lib/openai";
 import { logInfo, logError } from "@/lib/logger";
@@ -15,7 +15,7 @@ export async function processDocument({
   videoUrl,
   onProgress,
 }: ProcessDocumentOptions) {
-  const supabase = createClient();
+  const supabase = createSupabaseServer();
   const startTime = Date.now();
 
   try {
