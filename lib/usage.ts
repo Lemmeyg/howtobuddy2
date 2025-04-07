@@ -7,31 +7,35 @@ export interface UsageStats {
 }
 
 export async function getUsageStats(userId: string): Promise<UsageStats> {
-  const supabase = getSupabaseServerClient();
-
   try {
-    // Get current month's usage
-    const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const supabase = await getSupabaseServerClient();
+    
+    // Get documents created in the current month
+    const startOfMonth = new Date();
+    startOfMonth.setDate(1);
+    startOfMonth.setHours(0, 0, 0, 0);
 
-    const { data: documents, error: docError } = await supabase
+    const { data: documents, error } = await supabase
       .from('documents')
-      .select('id, created_at, video_duration')
+      .select('video_duration')
       .eq('user_id', userId)
       .gte('created_at', startOfMonth.toISOString());
 
-    if (docError) {
-      logError(new Error('Failed to fetch documents'), { userId, error: docError });
+    if (error) {
+      // If it's not a table existence error, log it
+      if (!error.message?.includes('does not exist')) {
+        logError(new Error('Failed to fetch documents'), { userId, error });
+      }
       return {
         documentsThisMonth: 0,
         totalVideoDuration: 0,
       };
     }
 
-    const totalVideoDuration = documents.reduce((total, doc) => total + (doc.video_duration || 0), 0);
+    const totalVideoDuration = (documents || []).reduce((total, doc) => total + (doc.video_duration || 0), 0);
 
     return {
-      documentsThisMonth: documents.length,
+      documentsThisMonth: documents?.length || 0,
       totalVideoDuration,
     };
   } catch (error) {

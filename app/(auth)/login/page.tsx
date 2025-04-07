@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import Link from "next/link";
 import { useToast } from "@/components/ui/use-toast";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
+import { getSupabaseClient } from "@/lib/supabase/singleton";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -17,7 +17,7 @@ export default function LoginPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { toast } = useToast();
-  const supabase = createClientComponentClient();
+  const supabase = getSupabaseClient();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,9 +43,11 @@ export default function LoginPage() {
       if (error) throw error;
 
       if (data?.session) {
-        // Get redirect path
-        const redirectTo = searchParams.get("redirectTo") || "/dashboard";
-        console.log('📍 Redirect path:', redirectTo);
+        // Get return path from URL parameters or default to dashboard
+        const returnTo = searchParams.get('returnTo');
+        const redirectPath = returnTo || '/dashboard';
+        
+        console.log('📍 Redirect path:', redirectPath);
         console.log('🔑 Session token exists:', !!data.session.access_token);
         
         // Verify session is properly set
@@ -57,8 +59,9 @@ export default function LoginPage() {
 
         // Only navigate if session is verified
         if (verifySession.data.session) {
-          console.log('🚀 Session verified, attempting navigation to:', redirectTo);
-          router.push(redirectTo);
+          console.log('🚀 Session verified, attempting navigation to:', redirectPath);
+          router.push(redirectPath);
+          router.refresh();
           console.log('✈️ Navigation called');
         } else {
           console.error('❌ Session verification failed');

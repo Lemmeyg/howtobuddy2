@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { createSupabaseClient } from "@/lib/supabase/server";
+import { getSession } from "@/lib/supabase/server";
 import { ArrowRight, Video, FileText, Zap, Shield, Star } from "lucide-react";
 import {
   Carousel,
@@ -12,8 +12,7 @@ import {
 import { UrlSubmissionForm } from "@/components/landing/url-submission-form";
 
 export default async function HomePage() {
-  const supabase = createSupabaseClient();
-  const { data: { session } } = await supabase.auth.getSession();
+  const session = await getSession();
 
   return (
     <div className="flex flex-col min-h-screen">

@@ -2,7 +2,6 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { Redis } from '@upstash/redis'
 import { Ratelimit } from '@upstash/ratelimit'
 import { createMiddlewareClient } from '@supabase/auth-helpers-nextjs'
-import { startPerformanceTransaction } from '@/lib/sentry'
 
 // Create Redis client
 const redis = new Redis({
@@ -10,15 +9,16 @@ const redis = new Redis({
   token: process.env.UPSTASH_REDIS_REST_TOKEN!,
 })
 
-// Create rate limiter that allows 10 requests per 10 seconds
+// Create rate limiter that allows 50 requests per minute
 const ratelimit = new Ratelimit({
   redis,
-  limiter: Ratelimit.slidingWindow(10, '10 s'),
+  limiter: Ratelimit.slidingWindow(50, '60 s'),
 })
 
 // List of public routes that don't require authentication
 const publicRoutes = [
   '/login',
+  '/register',
   '/signup',
   '/forgot-password',
   '/reset-password',
@@ -26,35 +26,54 @@ const publicRoutes = [
   '/_next',
   '/static',
   '/favicon.ico',
+  '/',
+]
+
+// List of routes that should be rate limited
+const rateLimitedRoutes = [
+  '/api/documents',
+  '/api/transcribe',
+  '/api/analyze',
 ]
 
 export async function middleware(request: NextRequest) {
-  // Start performance monitoring
-  const startTime = Date.now()
-  let transaction
-  
   try {
-    transaction = startPerformanceTransaction('middleware')
-
     // Create a response object that we can modify
     const response = NextResponse.next()
 
-    // Check if the request is for a public route
-    const isPublicRoute = request.nextUrl.pathname.startsWith('/api/public') ||
-      request.nextUrl.pathname.startsWith('/_next') ||
-      request.nextUrl.pathname.startsWith('/static') ||
-      request.nextUrl.pathname === '/' ||
-      request.nextUrl.pathname.startsWith('/auth')
+    // Initialize the Supabase client with the request and response
+    const supabase = createMiddlewareClient({ req: request, res: response })
 
-    // Apply rate limiting only to non-public routes
-    if (!isPublicRoute) {
+    // Refresh the session if needed
+    const {
+      data: { session },
+      error: sessionError,
+    } = await supabase.auth.getSession()
+
+    if (sessionError) {
+      console.error('Session error:', sessionError)
+    }
+
+    // Check if the request is for a public route
+    const isPublicRoute = publicRoutes.some(route => 
+      request.nextUrl.pathname === route || 
+      request.nextUrl.pathname.startsWith(route)
+    )
+
+    // Check if route should be rate limited
+    const shouldRateLimit = rateLimitedRoutes.some(route => 
+      request.nextUrl.pathname.startsWith(route)
+    )
+
+    // Apply rate limiting only to specific routes
+    if (shouldRateLimit) {
       const ip = request.ip ?? '127.0.0.1'
       const { success, limit, reset, remaining } = await ratelimit.limit(ip)
       
       if (!success) {
         return new NextResponse(
           JSON.stringify({
-            error: 'Too many requests',
+            error: 'Too many requests. Please try again in a few minutes.',
             limit,
             reset,
             remaining,
@@ -85,23 +104,21 @@ export async function middleware(request: NextRequest) {
       'Permissions-Policy',
       'camera=(), microphone=(), geolocation=()'
     )
-
-    // Initialize Supabase client
-    const supabase = createMiddlewareClient({ req: request, res: response })
     
     // Check authentication for protected routes
     if (!isPublicRoute) {
+      // Get the current session
       const { data: { user }, error } = await supabase.auth.getUser()
       
       if (error || !user) {
-        const redirectUrl = new URL('/auth/login', request.url)
-        redirectUrl.searchParams.set('returnTo', request.nextUrl.pathname)
-        return NextResponse.redirect(redirectUrl)
+        // Store the current URL to redirect back after login
+        const returnTo = encodeURIComponent(request.nextUrl.pathname)
+        return NextResponse.redirect(new URL(`/login?returnTo=${returnTo}`, request.url))
       }
     }
 
     // Check if user is trying to access auth pages while logged in
-    if (request.nextUrl.pathname.startsWith('/auth')) {
+    if (request.nextUrl.pathname.startsWith('/login') || request.nextUrl.pathname.startsWith('/register')) {
       const { data: { user }, error } = await supabase.auth.getUser()
       
       if (!error && user) {
@@ -113,19 +130,6 @@ export async function middleware(request: NextRequest) {
   } catch (error) {
     console.error('Middleware error:', error)
     return NextResponse.next()
-  } finally {
-    // Log performance metrics
-    const duration = Date.now() - startTime
-    console.log(`Middleware execution time: ${duration}ms`)
-    
-    // Finish transaction if it exists
-    if (transaction?.finish) {
-      try {
-        transaction.finish()
-      } catch (error) {
-        console.warn('Failed to finish transaction:', error)
-      }
-    }
   }
 }
 

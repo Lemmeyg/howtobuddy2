@@ -141,7 +141,7 @@ export default function DocumentPage({ params }: { params: { id: string } }) {
         </div>
       </div>
       <Textarea
-        value={document.content}
+        value={document.content ?? ''}
         onChange={(e) =>
           setDocument({ ...document, content: e.target.value })
         }

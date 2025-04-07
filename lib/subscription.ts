@@ -241,7 +241,7 @@ export function getRemainingDocuments(
 
 export async function getSubscriptionLimits(userId: string): Promise<SubscriptionLimits> {
   try {
-    const supabase = getSupabaseServerClient();
+    const supabase = await getSupabaseServerClient();
     
     // First, try to get the existing subscription
     const { data: subscription, error } = await supabase
@@ -250,8 +250,14 @@ export async function getSubscriptionLimits(userId: string): Promise<Subscriptio
       .eq('user_id', userId)
       .single();
 
-    // If no subscription exists, create a default FREE subscription
-    if (error && error.code === 'PGRST116') { // PGRST116 is "no rows returned"
+    // If no subscription exists or there's a table error, create a default FREE subscription
+    if (error) {
+      // If the error is not about missing rows, log it
+      if (error.code !== 'PGRST116') {
+        logError(new Error('Failed to fetch subscription'), { userId, error });
+      }
+
+      // Create default subscription
       const { data: newSubscription, error: insertError } = await supabase
         .from('subscriptions')
         .insert({
@@ -265,16 +271,12 @@ export async function getSubscriptionLimits(userId: string): Promise<Subscriptio
         .single();
 
       if (insertError) {
+        // If we can't create a subscription, just return FREE limits
         logError(new Error('Failed to create default subscription'), { userId, error: insertError });
         return subscriptionLimits[SubscriptionTier.FREE];
       }
 
       return subscriptionLimits[newSubscription.tier];
-    }
-
-    if (error) {
-      logError(new Error('Failed to fetch subscription'), { userId, error });
-      return subscriptionLimits[SubscriptionTier.FREE];
     }
     
     return subscriptionLimits[subscription.tier || SubscriptionTier.FREE];
