@@ -1,4 +1,4 @@
-import { createSupabaseServer } from "@/lib/supabase/server";
+import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { logError } from "@/lib/logger";
 
 export interface UsageStats {
@@ -7,7 +7,7 @@ export interface UsageStats {
 }
 
 export async function getUsageStats(userId: string): Promise<UsageStats> {
-  const supabase = createSupabaseServer();
+  const supabase = getSupabaseServerClient();
 
   try {
     // Get current month's usage
@@ -44,7 +44,7 @@ export async function getUsageStats(userId: string): Promise<UsageStats> {
 }
 
 export async function trackDocumentCreation(userId: string) {
-  const supabase = createSupabaseServer();
+  const supabase = getSupabaseServerClient();
 
   try {
     await supabase.from("usage_stats").upsert({
@@ -58,7 +58,7 @@ export async function trackDocumentCreation(userId: string) {
 }
 
 export async function trackVideoProcessing(userId: string, duration: number) {
-  const supabase = createSupabaseServer();
+  const supabase = getSupabaseServerClient();
 
   try {
     await supabase.from("usage_stats").upsert({

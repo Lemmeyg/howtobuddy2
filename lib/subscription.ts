@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { createSupabaseServer } from "@/lib/supabase/server";
+import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { logError, logInfo } from "@/lib/logger";
 
 export enum SubscriptionTier {
@@ -74,7 +74,7 @@ export interface UsageStats {
 
 export async function getUserSubscription(userId: string): Promise<UserSubscription | null> {
   try {
-    const supabase = createSupabaseServer();
+    const supabase = getSupabaseServerClient();
     const { data, error } = await supabase
       .from("subscriptions")
       .select("*")
@@ -95,7 +95,7 @@ export async function getUserSubscription(userId: string): Promise<UserSubscript
 
 export async function getUserUsageStats(userId: string): Promise<UsageStats> {
   try {
-    const supabase = createSupabaseServer();
+    const supabase = getSupabaseServerClient();
     const now = new Date();
     const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
 
@@ -241,20 +241,43 @@ export function getRemainingDocuments(
 
 export async function getSubscriptionLimits(userId: string): Promise<SubscriptionLimits> {
   try {
-    const supabase = createSupabaseServer();
+    const supabase = getSupabaseServerClient();
+    
+    // First, try to get the existing subscription
     const { data: subscription, error } = await supabase
       .from('subscriptions')
       .select('tier')
       .eq('user_id', userId)
       .single();
 
-    if (error) {
-      logError(new Error('Failed to fetch subscription'), { userId, error });
-      // Return free tier limits as default
-      return subscriptionLimits[SubscriptionTier.FREE];
+    // If no subscription exists, create a default FREE subscription
+    if (error && error.code === 'PGRST116') { // PGRST116 is "no rows returned"
+      const { data: newSubscription, error: insertError } = await supabase
+        .from('subscriptions')
+        .insert({
+          user_id: userId,
+          tier: SubscriptionTier.FREE,
+          status: 'active',
+          current_period_start: new Date().toISOString(),
+          current_period_end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days from now
+        })
+        .select('tier')
+        .single();
+
+      if (insertError) {
+        logError(new Error('Failed to create default subscription'), { userId, error: insertError });
+        return subscriptionLimits[SubscriptionTier.FREE];
+      }
+
+      return subscriptionLimits[newSubscription.tier];
     }
 
-    return subscriptionLimits[subscription?.tier || SubscriptionTier.FREE];
+    if (error) {
+      logError(new Error('Failed to fetch subscription'), { userId, error });
+      return subscriptionLimits[SubscriptionTier.FREE];
+    }
+    
+    return subscriptionLimits[subscription.tier || SubscriptionTier.FREE];
   } catch (error) {
     logError(new Error('Error getting subscription limits'), { userId, error });
     return subscriptionLimits[SubscriptionTier.FREE];

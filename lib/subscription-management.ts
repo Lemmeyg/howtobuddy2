@@ -1,4 +1,4 @@
-import { createSupabaseServer } from "@/lib/supabase/server";
+import { createSupabaseServer, getSupabaseServerClient } from "@/lib/supabase/server";
 import { logInfo, logError } from "@/lib/logger";
 import { Subscription, SubscriptionTier, SubscriptionInterval, subscriptionSchema } from "./subscription";
 import { z } from "zod";
@@ -58,50 +58,59 @@ export async function updateSubscription(
   }
 }
 
-export async function cancelSubscription(userId: string): Promise<Subscription> {
-  const supabase = createSupabaseServer();
+export async function updateSubscriptionTier(userId: string, tier: SubscriptionTier) {
+  const supabase = getSupabaseServerClient();
 
   try {
-    const { data: subscription, error } = await supabase
+    const { error } = await supabase
       .from("subscriptions")
       .update({
-        cancelAtPeriodEnd: true,
-        canceledAt: new Date().toISOString(),
+        tier,
+        updated_at: new Date().toISOString(),
       })
-      .eq("user_id", userId)
-      .select()
-      .single();
+      .eq("user_id", userId);
 
     if (error) throw error;
-
-    const updatedSubscription = subscriptionSchema.parse(subscription);
-    logInfo("Subscription cancelled", { userId });
-    return updatedSubscription;
   } catch (error) {
-    logError("Error cancelling subscription", { userId, error });
+    logError("Error updating subscription tier", { userId, tier, error });
     throw error;
   }
 }
 
-export async function reactivateSubscription(userId: string): Promise<Subscription> {
-  const supabase = createSupabaseServer();
+export async function cancelSubscription(userId: string) {
+  const supabase = getSupabaseServerClient();
 
   try {
-    const { data: subscription, error } = await supabase
+    const { error } = await supabase
       .from("subscriptions")
       .update({
-        cancelAtPeriodEnd: false,
-        canceledAt: null,
+        status: "canceled",
+        cancel_at_period_end: true,
+        updated_at: new Date().toISOString(),
       })
-      .eq("user_id", userId)
-      .select()
-      .single();
+      .eq("user_id", userId);
 
     if (error) throw error;
+  } catch (error) {
+    logError("Error canceling subscription", { userId, error });
+    throw error;
+  }
+}
 
-    const updatedSubscription = subscriptionSchema.parse(subscription);
-    logInfo("Subscription reactivated", { userId });
-    return updatedSubscription;
+export async function reactivateSubscription(userId: string) {
+  const supabase = getSupabaseServerClient();
+
+  try {
+    const { error } = await supabase
+      .from("subscriptions")
+      .update({
+        status: "active",
+        cancel_at_period_end: false,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("user_id", userId);
+
+    if (error) throw error;
   } catch (error) {
     logError("Error reactivating subscription", { userId, error });
     throw error;

@@ -1,4 +1,4 @@
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
+import { getSupabaseClient } from '@/lib/supabase/singleton'
 import { toast } from '@/components/ui/use-toast'
 
 export type NotificationType = 'document_update' | 'comment' | 'mention' | 'system'
@@ -16,7 +16,7 @@ export interface Notification {
 
 class NotificationService {
   private static instance: NotificationService
-  private supabase = createClientComponentClient()
+  private supabase = getSupabaseClient()
   private channel: any = null
   private callbacks: ((notification: Notification) => void)[] = []
 

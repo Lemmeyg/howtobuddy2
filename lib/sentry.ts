@@ -1,21 +1,19 @@
 import * as Sentry from '@sentry/nextjs'
 
-// Only initialize Sentry if we have a valid DSN
-if (process.env.NEXT_PUBLIC_SENTRY_DSN) {
+// Only use Sentry in production with a valid DSN
+const shouldInitializeSentry = process.env.NODE_ENV === 'production' && 
+  process.env.NEXT_PUBLIC_SENTRY_DSN && 
+  process.env.NEXT_PUBLIC_SENTRY_DSN !== 'your_sentry_dsn_here'
+
+if (shouldInitializeSentry) {
   Sentry.init({
     dsn: process.env.NEXT_PUBLIC_SENTRY_DSN,
     environment: process.env.NODE_ENV,
     release: process.env.NEXT_PUBLIC_APP_VERSION,
     // Disable features that cause build issues
     autoSessionTracking: false,
-    integrations: (defaults) => 
-      defaults.filter(integration => 
-        // Remove problematic integrations
-        !integration.name.includes('OpenTelemetry') &&
-        !integration.name.includes('Http') &&
-        !integration.name.includes('Node')
-      ),
-    // Disable performance monitoring features that depend on Node
+    integrations: [],
+    // Disable performance monitoring features
     enableTracing: false,
     tracesSampleRate: 0,
   })
@@ -23,14 +21,14 @@ if (process.env.NEXT_PUBLIC_SENTRY_DSN) {
 
 // Error logging utility
 export const logError = (error: Error, context?: Record<string, any>) => {
-  if (!process.env.NEXT_PUBLIC_SENTRY_DSN) {
+  if (!shouldInitializeSentry) {
     console.error(error, context)
     return
   }
   Sentry.captureException(error, { extra: context })
 }
 
-// Performance monitoring - simplified without OpenTelemetry
+// Performance monitoring - simplified
 export const startPerformanceTransaction = (name: string) => {
   const startTime = Date.now()
   
@@ -39,7 +37,7 @@ export const startPerformanceTransaction = (name: string) => {
     startTimestamp: startTime,
     finish: () => {
       const duration = Date.now() - startTime
-      if (process.env.NEXT_PUBLIC_SENTRY_DSN) {
+      if (shouldInitializeSentry) {
         Sentry.captureMessage('Performance Metric', {
           level: 'info',
           extra: {
@@ -61,7 +59,7 @@ export const captureUserFeedback = (feedback: {
   email: string
   comments: string
 }) => {
-  if (!process.env.NEXT_PUBLIC_SENTRY_DSN) return
+  if (!shouldInitializeSentry) return
   Sentry.captureMessage('User Feedback', {
     level: 'info',
     extra: feedback
@@ -70,7 +68,7 @@ export const captureUserFeedback = (feedback: {
 
 // Breadcrumb logging
 export const logBreadcrumb = (message: string, category: string, data?: any) => {
-  if (!process.env.NEXT_PUBLIC_SENTRY_DSN) return
+  if (!shouldInitializeSentry) return
   Sentry.addBreadcrumb({
     message,
     category,
@@ -81,13 +79,13 @@ export const logBreadcrumb = (message: string, category: string, data?: any) => 
 
 // Set user context
 export const setUserContext = (user: { id: string; email: string }) => {
-  if (!process.env.NEXT_PUBLIC_SENTRY_DSN) return
+  if (!shouldInitializeSentry) return
   Sentry.setUser(user)
 }
 
 // Clear user context
 export const clearUserContext = () => {
-  if (!process.env.NEXT_PUBLIC_SENTRY_DSN) return
+  if (!shouldInitializeSentry) return
   Sentry.setUser(null)
 }
 

@@ -9,6 +9,7 @@ import {
   CarouselNext,
   CarouselPrevious,
 } from "@/components/ui/carousel";
+import { UrlSubmissionForm } from "@/components/landing/url-submission-form";
 
 export default async function HomePage() {
   const supabase = createSupabaseClient();
@@ -26,27 +27,9 @@ export default async function HomePage() {
           <p className="mt-6 text-xl text-muted-foreground">
             Automatically convert video content into well-structured documents using AI. Save time and streamline your content creation process.
           </p>
-          <div className="mt-8 flex flex-col sm:flex-row gap-4">
-            {session ? (
-              <Button asChild size="lg" className="w-full sm:w-auto">
-                <Link href="/dashboard">
-                  Go to Dashboard
-                  <ArrowRight className="ml-2 h-5 w-5" />
-                </Link>
-              </Button>
-            ) : (
-              <>
-                <Button asChild size="lg" className="w-full sm:w-auto">
-                  <Link href="/register">
-                    Get Started
-                    <ArrowRight className="ml-2 h-5 w-5" />
-                  </Link>
-                </Button>
-                <Button asChild variant="outline" size="lg" className="w-full sm:w-auto">
-                  <Link href="/login">Sign In</Link>
-                </Button>
-              </>
-            )}
+          
+          <div className="mt-8">
+            <UrlSubmissionForm />
           </div>
         </div>
         <div className="flex-1 max-w-2xl w-full h-[400px] rounded-lg bg-muted/30 border flex items-center justify-center">

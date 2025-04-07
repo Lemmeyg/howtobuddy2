@@ -11,6 +11,7 @@ import { MainNav } from '@/components/main-nav'
 import { CommandMenu } from '@/components/command-menu'
 import { UserNav } from '@/components/user-nav'
 import { Footer } from '@/components/footer'
+import { cn } from "@/lib/utils";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -31,8 +32,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className={`${inter.variable} font-sans antialiased`}>
+    <html lang="en" suppressHydrationWarning>
+      <body className={cn(inter.variable, "font-sans antialiased")}>
         <Providers>
           <ErrorBoundary>
             <Suspense fallback={<LoadingSpinner />}>

@@ -4,7 +4,7 @@ const nextConfig = {
   swcMinify: true,
   distDir: '.next',
   experimental: {
-    // Remove deprecated flags
+    instrumentationHook: true,
   },
   images: {
     domains: ['localhost'],
@@ -30,6 +30,6 @@ const nextConfig = {
     // number of pages that should be kept simultaneously without being disposed
     pagesBufferLength: 2,
   },
-}
+};
 
-module.exports = nextConfig 
+module.exports = nextConfig; 

@@ -1,7 +1,9 @@
-import { createSupabaseServer } from "@/lib/supabase/server";
+import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { logInfo, logError } from "@/lib/logger";
 import { SubscriptionTier, getSubscriptionLimits } from "./subscription";
 import { z } from "zod";
+import { usageSchema } from "@/lib/validations/schemas";
+import type { SubscriptionUsage } from "@/lib/types";
 
 const usageSchema = z.object({
   id: z.string().uuid(),
@@ -17,7 +19,7 @@ const usageSchema = z.object({
 export type SubscriptionUsage = z.infer<typeof usageSchema>;
 
 export async function getUserUsage(userId: string): Promise<SubscriptionUsage | null> {
-  const supabase = createSupabaseServer();
+  const supabase = getSupabaseServerClient();
 
   try {
     const { data: usage, error } = await supabase
@@ -45,7 +47,7 @@ export async function incrementUsage(
   subscriptionId: string,
   videoDuration: number
 ): Promise<SubscriptionUsage> {
-  const supabase = createSupabaseServer();
+  const supabase = getSupabaseServerClient();
 
   try {
     const { data: usage, error } = await supabase.rpc("increment_subscription_usage", {
@@ -66,7 +68,7 @@ export async function incrementUsage(
 }
 
 export async function resetUsage(userId: string, subscriptionId: string): Promise<SubscriptionUsage> {
-  const supabase = createSupabaseServer();
+  const supabase = getSupabaseServerClient();
 
   try {
     const { data: usage, error } = await supabase
@@ -87,7 +89,7 @@ export async function resetUsage(userId: string, subscriptionId: string): Promis
     logInfo("Usage reset", { userId });
     return updatedUsage;
   } catch (error) {
-    logError("Error resetting usage", { userId, error });
+    logError("Error resetting usage", { userId, subscriptionId, error });
     throw error;
   }
 }
@@ -97,26 +99,38 @@ export async function checkUsageLimit(
   tier: SubscriptionTier,
   videoDuration: number
 ): Promise<boolean> {
-  const usage = await getUserUsage(userId);
-  if (!usage) return true;
+  const supabase = getSupabaseServerClient();
 
-  const limits = getSubscriptionLimits(tier);
-  const now = new Date();
-  const lastReset = new Date(usage.last_reset);
+  try {
+    const { data: usage, error } = await supabase
+      .from("subscription_usage")
+      .select("*")
+      .eq("user_id", userId)
+      .single();
 
-  // Check if we need to reset usage (monthly)
-  if (now.getMonth() !== lastReset.getMonth() || now.getFullYear() !== lastReset.getFullYear()) {
-    await resetUsage(userId, usage.subscription_id);
-    return true;
+    if (error) throw error;
+
+    const limits = getSubscriptionLimits(tier);
+    const now = new Date();
+    const lastReset = new Date(usage.last_reset);
+
+    // Check if we need to reset usage (monthly)
+    if (now.getMonth() !== lastReset.getMonth() || now.getFullYear() !== lastReset.getFullYear()) {
+      await resetUsage(userId, usage.subscription_id);
+      return true;
+    }
+
+    // Check if user has exceeded limits
+    if (tier === SubscriptionTier.FREE) {
+      return (
+        usage.documents_processed < limits.documentsPerMonth &&
+        usage.total_video_duration + videoDuration <= limits.maxVideoDuration
+      );
+    }
+
+    return usage.total_video_duration + videoDuration <= limits.maxVideoDuration;
+  } catch (error) {
+    logError("Error checking usage limit", { userId, tier, videoDuration, error });
+    throw error;
   }
-
-  // Check if user has exceeded limits
-  if (tier === SubscriptionTier.FREE) {
-    return (
-      usage.documents_processed < limits.documentsPerMonth &&
-      usage.total_video_duration + videoDuration <= limits.maxVideoDuration
-    );
-  }
-
-  return usage.total_video_duration + videoDuration <= limits.maxVideoDuration;
 } 

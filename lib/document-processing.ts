@@ -1,8 +1,10 @@
-import { createSupabaseServer } from "@/lib/supabase/server";
+import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { submitTranscriptRequest, pollTranscriptStatus } from "@/lib/assemblyai";
 import { generateSummary } from "@/lib/openai";
 import { logInfo, logError } from "@/lib/logger";
 import { withRetry } from "@/lib/error-handling";
+import { getYouTubeVideoId } from "@/lib/youtube";
+import { trackDocumentCreation } from "@/lib/usage";
 
 interface ProcessDocumentOptions {
   documentId: string;
@@ -15,7 +17,7 @@ export async function processDocument({
   videoUrl,
   onProgress,
 }: ProcessDocumentOptions) {
-  const supabase = createSupabaseServer();
+  const supabase = getSupabaseServerClient();
   const startTime = Date.now();
 
   try {
@@ -107,6 +109,42 @@ export async function processDocument({
       .eq("id", documentId);
 
     onProgress?.("Error", 0);
+    throw error;
+  }
+}
+
+export async function createDocument(userId: string, url: string, title: string) {
+  const supabase = getSupabaseServerClient();
+
+  try {
+    const videoId = getYouTubeVideoId(url);
+    if (!videoId) {
+      throw new Error("Invalid YouTube URL");
+    }
+
+    const { data: document, error } = await supabase
+      .from("documents")
+      .insert([
+        {
+          user_id: userId,
+          video_url: url,
+          title,
+          status: "pending",
+        },
+      ])
+      .select()
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    // Track document creation for usage limits
+    await trackDocumentCreation(userId);
+
+    return document;
+  } catch (error) {
+    logError("Error creating document", { userId, url, error });
     throw error;
   }
 } 

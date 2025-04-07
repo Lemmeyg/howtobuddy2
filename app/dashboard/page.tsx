@@ -8,15 +8,17 @@ import Link from "next/link";
 import { formatDistanceToNow } from "date-fns";
 import { getSubscriptionLimits } from "@/lib/subscription";
 import { getUsageStats } from "@/lib/usage";
+import { DashboardUrlSubmissionForm } from "@/components/dashboard/dashboard-url-submission-form";
 
 export default async function DashboardPage() {
   const supabase = createServerComponentClient({ cookies });
 
   const {
-    data: { session },
-  } = await supabase.auth.getSession();
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
 
-  if (!session) {
+  if (!user || userError) {
     redirect("/login");
   }
 
@@ -24,13 +26,13 @@ export default async function DashboardPage() {
   const { data: documents } = await supabase
     .from("documents")
     .select("*")
-    .eq("user_id", session.user.id)
+    .eq("user_id", user.id)
     .order("created_at", { ascending: false })
     .limit(5);
 
   // Fetch user's subscription and usage
-  const subscription = await getSubscriptionLimits(session.user.id);
-  const usage = await getUsageStats(session.user.id);
+  const subscription = await getSubscriptionLimits(user.id);
+  const usage = await getUsageStats(user.id);
 
   // Calculate usage percentages
   const documentUsagePercent = Math.min(
@@ -47,15 +49,17 @@ export default async function DashboardPage() {
       {/* Header */}
       <div className="flex justify-between items-center">
         <h1 className="text-3xl font-bold">Dashboard</h1>
-        <div className="space-x-4">
-          <Button asChild>
-            <Link href="/upload">
-              <Plus className="mr-2 h-4 w-4" />
-              New Document
-            </Link>
-          </Button>
-        </div>
       </div>
+
+      {/* URL Submission Form */}
+      <Card className="bg-primary/5">
+        <CardHeader>
+          <CardTitle>Create New Document</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <DashboardUrlSubmissionForm />
+        </CardContent>
+      </Card>
 
       {/* Usage Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

@@ -1,7 +1,7 @@
 import Stripe from "stripe";
-import { createSupabaseServer } from "@/lib/supabase/server";
+import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { logInfo, logError } from "@/lib/logger";
-import { SubscriptionTier } from "./subscription";
+import { SubscriptionTier } from "@/lib/types";
 
 if (!process.env.STRIPE_SECRET_KEY) {
   throw new Error("Missing STRIPE_SECRET_KEY environment variable");
@@ -37,93 +37,58 @@ export const subscriptionPlans = {
   },
 } as const;
 
-export async function createStripeCustomer(userId: string, email: string) {
-  const supabase = createSupabaseServer();
+export async function createCheckoutSession(userId: string, tier: SubscriptionTier) {
+  const supabase = getSupabaseServerClient();
 
   try {
-    // Check if customer already exists
-    const { data: subscription } = await supabase
-      .from("subscriptions")
-      .select("stripe_customer_id")
-      .eq("user_id", userId)
-      .single();
-
-    if (subscription?.stripe_customer_id) {
-      return subscription.stripe_customer_id;
-    }
-
-    // Create new Stripe customer
-    const customer = await stripe.customers.create({
-      email,
-      metadata: {
-        userId,
-      },
-    });
-
-    // Update subscription with Stripe customer ID
-    await supabase
-      .from("subscriptions")
-      .update({ stripe_customer_id: customer.id })
-      .eq("user_id", userId);
-
-    logInfo("Stripe customer created", { userId, customerId: customer.id });
-    return customer.id;
-  } catch (error) {
-    logError("Error creating Stripe customer", { userId, error });
-    throw error;
-  }
-}
-
-export async function createSubscriptionCheckoutSession(
-  userId: string,
-  tier: keyof typeof subscriptionPlans
-) {
-  const supabase = createSupabaseServer();
-
-  try {
-    // Get user email
-    const { data: user, error: userError } = await supabase
-      .from("users")
-      .select("email")
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("email, stripe_customer_id")
       .eq("id", userId)
       .single();
 
-    if (userError || !user) {
-      throw new Error("User not found");
+    if (!profile) {
+      throw new Error("User profile not found");
     }
 
-    // Get or create Stripe customer
-    const customerId = await createStripeCustomer(userId, user.email);
+    let { stripe_customer_id } = profile;
 
-    // Create Stripe checkout session
+    // Create or get Stripe customer
+    if (!stripe_customer_id) {
+      const customer = await stripe.customers.create({
+        email: profile.email,
+        metadata: {
+          userId,
+        },
+      });
+      stripe_customer_id = customer.id;
+
+      // Update user profile with Stripe customer ID
+      await supabase
+        .from("profiles")
+        .update({ stripe_customer_id })
+        .eq("id", userId);
+    }
+
+    // Create checkout session
     const session = await stripe.checkout.sessions.create({
-      customer: customerId,
+      customer: stripe_customer_id,
+      mode: "subscription",
       payment_method_types: ["card"],
       line_items: [
         {
-          price_data: {
-            currency: "usd",
-            product_data: {
-              name: subscriptionPlans[tier].name,
-            },
-            unit_amount: subscriptionPlans[tier].price * 100, // Convert to cents
-            recurring: {
-              interval: subscriptionPlans[tier].interval,
-            },
-          },
+          price: process.env[`STRIPE_${tier}_PRICE_ID`],
           quantity: 1,
         },
       ],
-      mode: "subscription",
-      success_url: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard?success=true`,
-      cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard?canceled=true`,
+      success_url: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`,
       metadata: {
         userId,
         tier,
       },
     });
 
-    logInfo("Checkout session created", { userId, sessionId: session.id });
     return session;
   } catch (error) {
     logError("Error creating checkout session", { userId, tier, error });
@@ -131,88 +96,63 @@ export async function createSubscriptionCheckoutSession(
   }
 }
 
-export async function handleSubscriptionWebhook(event: Stripe.Event) {
-  const supabase = createSupabaseServer();
+export async function createBillingPortalSession(userId: string) {
+  const supabase = getSupabaseServerClient();
 
   try {
-    switch (event.type) {
-      case "checkout.session.completed": {
-        const session = event.data.object as Stripe.Checkout.Session;
-        const userId = session.metadata?.userId;
-        const tier = session.metadata?.tier as keyof typeof subscriptionPlans;
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("stripe_customer_id")
+      .eq("id", userId)
+      .single();
 
-        if (!userId || !tier) {
-          throw new Error("Missing required metadata");
-        }
-
-        // Update subscription
-        await supabase
-          .from("subscriptions")
-          .update({
-            tier,
-            status: "active",
-            current_period_start: new Date().toISOString(),
-            current_period_end: new Date(
-              new Date().setMonth(new Date().getMonth() + 1)
-            ).toISOString(),
-            stripe_subscription_id: session.subscription as string,
-            cancel_at_period_end: false,
-          })
-          .eq("user_id", userId);
-
-        logInfo("Subscription activated", { userId, tier });
-        break;
-      }
-
-      case "customer.subscription.updated": {
-        const subscription = event.data.object as Stripe.Subscription;
-        const userId = subscription.metadata?.userId;
-
-        if (!userId) {
-          throw new Error("Missing required metadata");
-        }
-
-        // Update subscription status
-        await supabase
-          .from("subscriptions")
-          .update({
-            status: subscription.status,
-            current_period_end: new Date(
-              subscription.current_period_end * 1000
-            ).toISOString(),
-            cancel_at_period_end: subscription.cancel_at_period_end,
-          })
-          .eq("user_id", userId);
-
-        logInfo("Subscription updated", { userId, status: subscription.status });
-        break;
-      }
-
-      case "customer.subscription.deleted": {
-        const subscription = event.data.object as Stripe.Subscription;
-        const userId = subscription.metadata?.userId;
-
-        if (!userId) {
-          throw new Error("Missing required metadata");
-        }
-
-        // Update subscription status
-        await supabase
-          .from("subscriptions")
-          .update({
-            status: "canceled",
-            current_period_end: new Date(
-              subscription.current_period_end * 1000
-            ).toISOString(),
-          })
-          .eq("user_id", userId);
-
-        logInfo("Subscription canceled", { userId });
-        break;
-      }
+    if (!profile?.stripe_customer_id) {
+      throw new Error("No Stripe customer found");
     }
+
+    const session = await stripe.billingPortal.sessions.create({
+      customer: profile.stripe_customer_id,
+      return_url: `${process.env.NEXT_PUBLIC_APP_URL}/dashboard`,
+    });
+
+    return session;
   } catch (error) {
-    logError("Error handling webhook", { event: event.type, error });
+    logError("Error creating billing portal session", { userId, error });
+    throw error;
+  }
+}
+
+export async function handleSubscriptionChange(
+  subscription: any,
+  customerId: string
+) {
+  const supabase = getSupabaseServerClient();
+
+  try {
+    // Get user by Stripe customer ID
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("id")
+      .eq("stripe_customer_id", customerId)
+      .single();
+
+    if (!profile) {
+      throw new Error("User not found");
+    }
+
+    // Update subscription in database
+    await supabase
+      .from("subscriptions")
+      .update({
+        status: subscription.status,
+        tier: subscription.metadata.tier,
+        current_period_start: new Date(subscription.current_period_start * 1000).toISOString(),
+        current_period_end: new Date(subscription.current_period_end * 1000).toISOString(),
+        cancel_at_period_end: subscription.cancel_at_period_end,
+      })
+      .eq("user_id", profile.id);
+  } catch (error) {
+    logError("Error handling subscription change", { subscription, customerId, error });
     throw error;
   }
 } 

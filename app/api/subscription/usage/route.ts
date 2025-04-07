@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
-import { createSupabaseServer } from "@/lib/supabase/server";
+import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { logRequest, logResponse } from "@/lib/logger";
 import { getUserUsage } from "@/lib/subscription-usage";
 
 export async function GET() {
   const startTime = Date.now();
-  const supabase = createSupabaseServer();
+  const supabase = getSupabaseServerClient();
 
   try {
     const {

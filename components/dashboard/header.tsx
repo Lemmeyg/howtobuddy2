@@ -2,17 +2,17 @@
 
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/components/ui/use-toast";
-import { createClientComponentClient } from "@supabase/auth-helpers-nextjs";
 import { useRouter } from "next/navigation";
 import {
   Bell,
   Plus,
 } from "lucide-react";
+import { getSupabaseClient } from "@/lib/supabase/singleton";
 
 export function DashboardHeader() {
   const router = useRouter();
   const { toast } = useToast();
-  const supabase = createClientComponentClient();
+  const supabase = getSupabaseClient();
 
   const handleSignOut = async () => {
     const { error } = await supabase.auth.signOut();

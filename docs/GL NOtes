@@ -3,3 +3,13 @@ Next steps:
 Outline the user journey better with landing page and experience
 Run the unit tests
 check major functionality works
+
+
+
+
+A Landing page > Login
+B Login > Dashboard
+C Dashboard > Submitted 
+
+Next thing to fix -
+When the submit button is clicked on the dashboard, submit the URL to the AI for transacription.

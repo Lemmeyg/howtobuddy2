@@ -1,4 +1,4 @@
-import { createSupabaseServer } from "@/lib/supabase/server";
+import { getSupabaseServerClient } from "@/lib/supabase/server";
 import { logInfo, logError } from "@/lib/logger";
 import {
   Template,
@@ -10,139 +10,84 @@ import {
 
 export async function createTemplate(
   userId: string,
-  data: Omit<Template, "id" | "version" | "userId" | "createdAt" | "updatedAt">
+  template: Omit<Template, "id" | "created_at" | "updated_at">
 ): Promise<Template> {
-  const supabase = createSupabaseServer();
+  const supabase = getSupabaseServerClient();
 
   try {
-    const { data: template, error } = await supabase
+    const { data, error } = await supabase
       .from("templates")
-      .insert({
-        ...data,
-        userId,
-        version: 1,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      })
+      .insert([{ ...template, user_id: userId }])
       .select()
       .single();
 
     if (error) throw error;
 
-    const validatedTemplate = templateSchema.parse(template);
-    logInfo("Template created", { templateId: validatedTemplate.id, userId });
-    return validatedTemplate;
+    return templateSchema.parse(data);
   } catch (error) {
-    logError("Error creating template", { userId, error });
+    logError("Error creating template", { userId, template, error });
     throw error;
   }
 }
 
 export async function updateTemplate(
-  templateId: string,
   userId: string,
-  data: Partial<Omit<Template, "id" | "userId" | "createdAt" | "updatedAt">>
+  templateId: string,
+  updates: Partial<Template>
 ): Promise<Template> {
-  const supabase = createSupabaseServer();
+  const supabase = getSupabaseServerClient();
 
   try {
-    // Get current template
-    const { data: currentTemplate, error: fetchError } = await supabase
+    const { data, error } = await supabase
       .from("templates")
-      .select("*")
+      .update(updates)
       .eq("id", templateId)
-      .eq("userId", userId)
-      .single();
-
-    if (fetchError) throw fetchError;
-
-    // Create new version if content or variables changed
-    if (data.content || data.variables) {
-      const { error: versionError } = await supabase
-        .from("template_versions")
-        .insert({
-          templateId,
-          version: currentTemplate.version,
-          content: currentTemplate.content,
-          variables: currentTemplate.variables,
-          createdAt: new Date().toISOString(),
-        });
-
-      if (versionError) throw versionError;
-
-      // Increment version
-      data.version = currentTemplate.version + 1;
-    }
-
-    // Update template
-    const { data: template, error } = await supabase
-      .from("templates")
-      .update({
-        ...data,
-        updatedAt: new Date().toISOString(),
-      })
-      .eq("id", templateId)
-      .eq("userId", userId)
+      .eq("user_id", userId)
       .select()
       .single();
 
     if (error) throw error;
 
-    const validatedTemplate = templateSchema.parse(template);
-    logInfo("Template updated", { templateId, userId });
-    return validatedTemplate;
+    return templateSchema.parse(data);
   } catch (error) {
-    logError("Error updating template", { templateId, userId, error });
+    logError("Error updating template", { userId, templateId, updates, error });
     throw error;
   }
 }
 
-export async function deleteTemplate(
-  templateId: string,
-  userId: string
-): Promise<void> {
-  const supabase = createSupabaseServer();
+export async function deleteTemplate(userId: string, templateId: string): Promise<void> {
+  const supabase = getSupabaseServerClient();
 
   try {
     const { error } = await supabase
       .from("templates")
       .delete()
       .eq("id", templateId)
-      .eq("userId", userId);
+      .eq("user_id", userId);
 
     if (error) throw error;
-
-    logInfo("Template deleted", { templateId, userId });
   } catch (error) {
-    logError("Error deleting template", { templateId, userId, error });
+    logError("Error deleting template", { userId, templateId, error });
     throw error;
   }
 }
 
-export async function getTemplate(
-  templateId: string,
-  userId: string
-): Promise<Template | null> {
-  const supabase = createSupabaseServer();
+export async function getTemplate(userId: string, templateId: string): Promise<Template> {
+  const supabase = getSupabaseServerClient();
 
   try {
-    const { data: template, error } = await supabase
+    const { data, error } = await supabase
       .from("templates")
       .select("*")
       .eq("id", templateId)
-      .eq("userId", userId)
+      .eq("user_id", userId)
       .single();
 
-    if (error) {
-      if (error.code === "PGRST116") {
-        return null;
-      }
-      throw error;
-    }
+    if (error) throw error;
 
-    return templateSchema.parse(template);
+    return templateSchema.parse(data);
   } catch (error) {
-    logError("Error fetching template", { templateId, userId, error });
+    logError("Error getting template", { userId, templateId, error });
     throw error;
   }
 }
@@ -156,7 +101,7 @@ export async function listTemplates(
     offset?: number;
   } = {}
 ): Promise<Template[]> {
-  const supabase = createSupabaseServer();
+  const supabase = getSupabaseServerClient();
 
   try {
     let query = supabase
@@ -196,7 +141,7 @@ export async function getTemplateVersion(
   version: number,
   userId: string
 ): Promise<TemplateVersion | null> {
-  const supabase = createSupabaseServer();
+  const supabase = getSupabaseServerClient();
 
   try {
     const { data: templateVersion, error } = await supabase
@@ -231,7 +176,7 @@ export async function recordTemplateUsage(
   documentId: string,
   variables: Record<string, string>
 ): Promise<TemplateUsage> {
-  const supabase = createSupabaseServer();
+  const supabase = getSupabaseServerClient();
 
   try {
     const { data: usage, error } = await supabase
