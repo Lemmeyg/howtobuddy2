@@ -1,10 +1,9 @@
 import OpenAI from "openai";
-import { RateLimiter } from "limiter";
-import { logInfo } from "./logger";
+import { logInfo, logError } from "./logger";
 import { withRetry } from "./error-handling";
 
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-const MAX_REQUESTS_PER_MINUTE = 60; // OpenAI's rate limit
+const MAX_REQUESTS_PER_MINUTE = 60;
 
 if (!OPENAI_API_KEY) {
   throw new Error("OPENAI_API_KEY is not set in environment variables");
@@ -14,11 +13,25 @@ const openai = new OpenAI({
   apiKey: OPENAI_API_KEY,
 });
 
-// Rate limiter for OpenAI API calls
-const limiter = new RateLimiter({
-  tokensPerInterval: MAX_REQUESTS_PER_MINUTE,
-  interval: "minute",
-});
+// Simple rate limiting
+let lastRequestTime = 0;
+const MIN_REQUEST_INTERVAL = (60 * 1000) / MAX_REQUESTS_PER_MINUTE; // Minimum time between requests
+
+async function makeRateLimitedRequest<T>(
+  requestFn: () => Promise<T>
+): Promise<T> {
+  const now = Date.now();
+  const timeSinceLastRequest = now - lastRequestTime;
+  
+  if (timeSinceLastRequest < MIN_REQUEST_INTERVAL) {
+    await new Promise(resolve => 
+      setTimeout(resolve, MIN_REQUEST_INTERVAL - timeSinceLastRequest)
+    );
+  }
+  
+  lastRequestTime = Date.now();
+  return requestFn();
+}
 
 // Cost per 1K tokens (as of March 2024)
 const COST_PER_1K_TOKENS = {
@@ -51,16 +64,6 @@ function calculateCost(
   const outputCost = (completionTokens / 1000) * costs.output;
 
   return inputCost + outputCost;
-}
-
-async function makeRateLimitedRequest<T>(
-  requestFn: () => Promise<T>
-): Promise<T> {
-  const hasToken = await limiter.tryRemoveTokens(1);
-  if (!hasToken) {
-    throw new Error("Rate limit exceeded. Please try again later.");
-  }
-  return requestFn();
 }
 
 export interface SummaryOptions {

@@ -4,7 +4,7 @@ export interface RetryOptions {
   maxAttempts?: number;
   delay?: number;
   backoff?: boolean;
-  shouldRetry?: (error: Error) => boolean;
+  shouldRetry?: (error: any) => boolean;
 }
 
 export class RetryableError extends Error {
@@ -19,41 +19,29 @@ export class RetryableError extends Error {
 }
 
 export async function withRetry<T>(
-  operation: () => Promise<T>,
+  fn: () => Promise<T>,
   options: RetryOptions = {}
 ): Promise<T> {
   const {
     maxAttempts = 3,
     delay = 1000,
     backoff = true,
-    shouldRetry = (error) => !(error instanceof RetryableError),
+    shouldRetry = () => true
   } = options;
 
-  let lastError: Error | null = null;
-  let attempt = 0;
-
-  while (attempt < maxAttempts) {
+  let lastError: any;
+  
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      return await operation();
+      return await fn();
     } catch (error) {
-      lastError = error as Error;
-      attempt++;
-
-      if (!shouldRetry(lastError) || attempt >= maxAttempts) {
-        logError("Operation failed after retries", {
-          error: lastError,
-          attempts: attempt,
-          maxAttempts,
-        });
-        throw new RetryableError(
-          `Operation failed after ${attempt} attempts`,
-          lastError,
-          attempt
-        );
+      lastError = error;
+      
+      if (attempt === maxAttempts || !shouldRetry(error)) {
+        throw error;
       }
-
-      const waitTime = backoff ? delay * Math.pow(2, attempt - 1) : delay;
-      await new Promise((resolve) => setTimeout(resolve, waitTime));
+      
+      await new Promise(resolve => setTimeout(resolve, delay * attempt));
     }
   }
 

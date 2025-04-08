@@ -1,7 +1,7 @@
 import { AssemblyAITranscriptResponse, AssemblyAIError, YouTubeVideoInfo } from "@/types/assemblyai";
 import { logError, logInfo } from "./logger";
 
-const ASSEMBLY_API_KEY = process.env.ASSEMBLY_API_KEY;
+const ASSEMBLY_API_KEY = process.env.NEXT_PUBLIC_ASSEMBLY_API_KEY;
 const ASSEMBLY_API_URL = "https://api.assemblyai.com/v2";
 const WEBHOOK_URL = process.env.NEXT_PUBLIC_APP_URL + "/api/webhooks/assemblyai";
 const MAX_RETRIES = 3;
@@ -11,7 +11,7 @@ const MAX_POLLING_TIME = 300000; // 5 minutes
 const MAX_POLLING_ATTEMPTS = MAX_POLLING_TIME / POLLING_INTERVAL;
 
 if (!ASSEMBLY_API_KEY) {
-  throw new Error("ASSEMBLY_API_KEY is not defined");
+  throw new Error("NEXT_PUBLIC_ASSEMBLY_API_KEY is not defined");
 }
 
 async function delay(ms: number) {
@@ -75,7 +75,7 @@ export async function submitTranscriptionJob(videoUrl: string): Promise<string> 
     const response = await fetch(`${ASSEMBLY_API_URL}/transcript`, {
       method: "POST",
       headers: {
-        "Authorization": ASSEMBLY_API_KEY,
+        "Authorization": `Bearer ${ASSEMBLY_API_KEY}`,
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
@@ -108,7 +108,7 @@ export async function waitForTranscription(jobId: string): Promise<Transcription
     while (true) {
       const response = await fetch(`${ASSEMBLY_API_URL}/transcript/${jobId}`, {
         headers: {
-          "Authorization": ASSEMBLY_API_KEY,
+          "Authorization": `Bearer ${ASSEMBLY_API_KEY}`,
         },
       });
 
@@ -143,7 +143,7 @@ export async function getTranscriptionStatus(transcriptId: string): Promise<Tran
 
     const response = await fetch(`${ASSEMBLY_API_URL}/transcript/${transcriptId}`, {
       headers: {
-        "Authorization": ASSEMBLY_API_KEY,
+        "Authorization": `Bearer ${ASSEMBLY_API_KEY}`,
       },
     });
 

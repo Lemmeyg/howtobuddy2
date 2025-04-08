@@ -5,6 +5,8 @@ import { logInfo, logError } from "@/lib/logger";
 import { withRetry } from "@/lib/error-handling";
 import { getYouTubeVideoId } from "@/lib/youtube";
 import { trackDocumentCreation } from "@/lib/usage";
+import { downloadYouTubeAudio, cleanupAudioFile } from './youtube';
+import { AssemblyAIService } from './assemblyai/service';
 
 interface ProcessDocumentOptions {
   documentId: string;
@@ -18,51 +20,64 @@ export async function processDocument({
   onProgress,
 }: ProcessDocumentOptions) {
   const supabase = getSupabaseServerClient();
+  const assemblyAI = new AssemblyAIService();
   const startTime = Date.now();
 
   try {
-    // Update document status to processing
-    await supabase
-      .from("documents")
-      .update({ status: "processing" })
-      .eq("id", documentId);
+    // Get document from database
+    const { data: document, error: fetchError } = await supabase
+      .from('documents')
+      .select('*')
+      .eq('id', documentId)
+      .single();
 
-    onProgress?.("Starting transcription...");
-
-    // Submit transcription request
-    const transcriptId = await withRetry(
-      () => submitTranscriptRequest(videoUrl),
-      {
-        maxAttempts: 3,
-        delay: 1000,
-        shouldRetry: (error) => error.message.includes("rate limit"),
-      }
-    );
-
-    // Poll for transcription status
-    const transcriptStatus = await pollTranscriptStatus(transcriptId, (status, progress) => {
-      onProgress?.(`Transcribing: ${status}`, progress);
-    });
-
-    if (transcriptStatus.status === "error") {
-      throw new Error(transcriptStatus.error || "Transcription failed");
+    if (fetchError || !document) {
+      throw new Error(fetchError?.message || 'Document not found');
     }
 
-    // Update document with transcript
+    // Update status to processing
     await supabase
-      .from("documents")
-      .update({
-        transcript: transcriptStatus.text,
-        video_title: transcriptStatus.title,
-        video_duration: transcriptStatus.duration,
-      })
-      .eq("id", documentId);
+      .from('documents')
+      .update({ status: 'processing' })
+      .eq('id', documentId);
+
+    onProgress?.('Downloading video audio...');
+
+    // Download YouTube audio
+    const videoInfo = await downloadYouTubeAudio(videoUrl);
+
+    try {
+      onProgress?.('Transcribing audio...');
+
+      // Submit audio file for transcription
+      const transcriptionId = await assemblyAI.submitTranscription(`file://${videoInfo.audioPath}`);
+      
+      // Wait for transcription to complete
+      const transcription = await assemblyAI.waitForTranscription(transcriptionId);
+
+      // Update document with transcription
+      await supabase
+        .from('documents')
+        .update({
+          status: 'completed',
+          content: transcription.text,
+          video_title: videoInfo.title,
+          video_duration: videoInfo.duration,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', documentId);
+
+      logInfo(`Document ${documentId} processed successfully`);
+    } finally {
+      // Clean up audio file
+      cleanupAudioFile(videoInfo.audioPath);
+    }
 
     onProgress?.("Generating summary...");
 
     // Generate summary using OpenAI
     const { summary, usage } = await withRetry(
-      () => generateSummary(transcriptStatus.text),
+      () => generateSummary(transcription.text),
       {
         maxAttempts: 3,
         delay: 1000,
@@ -105,6 +120,7 @@ export async function processDocument({
       .update({
         status: "error",
         error_message: error instanceof Error ? error.message : "Processing failed",
+        updated_at: new Date().toISOString()
       })
       .eq("id", documentId);
 

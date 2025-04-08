@@ -1,78 +1,69 @@
-import { logger } from './logger';
+import { logError, logInfo } from './logging';
+import path from 'path';
+import fs from 'fs';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 
-interface YouTubeVideoInfo {
-  videoId: string;
+const execAsync = promisify(exec);
+
+export interface YouTubeVideoInfo {
+  id: string;
   title: string;
   duration: number;
-  channelTitle: string;
+  audioPath: string;
 }
 
-export async function getYouTubeVideoInfo(videoUrl: string): Promise<YouTubeVideoInfo> {
+function extractVideoId(url: string): string {
+  const match = url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\n?]+)/);
+  if (!match) throw new Error('Invalid YouTube URL');
+  return match[1];
+}
+
+export async function downloadYouTubeAudio(videoUrl: string): Promise<YouTubeVideoInfo> {
   try {
-    const videoId = extractYouTubeVideoId(videoUrl);
-    if (!videoId) {
-      throw new Error('Invalid YouTube URL');
+    // Create uploads directory if it doesn't exist
+    const uploadsDir = path.join(process.cwd(), 'uploads');
+    if (!fs.existsSync(uploadsDir)) {
+      fs.mkdirSync(uploadsDir, { recursive: true });
     }
 
-    const response = await fetch(
-      `https://www.googleapis.com/youtube/v3/videos?id=${videoId}&part=snippet,contentDetails&key=${process.env.YOUTUBE_API_KEY}`,
-      {
-        headers: {
-          'Accept': 'application/json',
-        },
-      }
+    const videoId = extractVideoId(videoUrl);
+    const outputPath = path.join(uploadsDir, `${videoId}.m4a`);
+
+    // Get video info using Python and yt-dlp
+    const { stdout: infoJson } = await execAsync(
+      `python -m yt_dlp -j "${videoUrl}"`,
+      { maxBuffer: 10 * 1024 * 1024 } // 10MB buffer
+    );
+    const info = JSON.parse(infoJson);
+
+    // Download audio using Python and yt-dlp
+    await execAsync(
+      `python -m yt_dlp -x --audio-format m4a -o "${outputPath}" "${videoUrl}"`,
+      { maxBuffer: 10 * 1024 * 1024 }
     );
 
-    if (!response.ok) {
-      const error = await response.json();
-      if (response.status === 403) {
-        throw new Error('YouTube API key is invalid or has exceeded quota');
-      }
-      throw new Error(error.error?.message || 'Failed to fetch YouTube video info');
-    }
+    logInfo(`Successfully downloaded audio for video ${videoId}`);
 
-    const data = await response.json();
-    if (!data.items || data.items.length === 0) {
-      throw new Error('Video not found');
-    }
-
-    const video = data.items[0];
     return {
-      videoId,
-      title: video.snippet.title,
-      duration: parseDuration(video.contentDetails.duration),
-      channelTitle: video.snippet.channelTitle,
+      id: videoId,
+      title: info.title,
+      duration: info.duration,
+      audioPath: outputPath
     };
   } catch (error) {
-    logger.error('Error fetching YouTube video info', { error, videoUrl });
-    throw error;
+    logError('Error downloading YouTube audio:', error);
+    throw new Error('Failed to download YouTube audio');
   }
 }
 
-function extractYouTubeVideoId(url: string): string | null {
-  const patterns = [
-    /(?:youtube\.com\/watch\?v=|youtu\.be\/)([^&\n?]+)/,
-    /youtube\.com\/embed\/([^&\n?]+)/,
-  ];
-
-  for (const pattern of patterns) {
-    const match = url.match(pattern);
-    if (match) return match[1];
+export function cleanupAudioFile(audioPath: string) {
+  try {
+    if (fs.existsSync(audioPath)) {
+      fs.unlinkSync(audioPath);
+      logInfo(`Cleaned up audio file: ${audioPath}`);
+    }
+  } catch (error) {
+    logError('Error cleaning up audio file:', error);
   }
-  return null;
-}
-
-function parseDuration(duration: string): number {
-  const match = duration.match(/PT(\d+H)?(\d+M)?(\d+S)?/);
-  if (!match) return 0;
-
-  const hours = (match[1] || '').replace('H', '');
-  const minutes = (match[2] || '').replace('M', '');
-  const seconds = (match[3] || '').replace('S', '');
-
-  return (
-    (parseInt(hours) || 0) * 3600 +
-    (parseInt(minutes) || 0) * 60 +
-    (parseInt(seconds) || 0)
-  );
 } 

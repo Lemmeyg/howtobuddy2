@@ -28,35 +28,23 @@ export interface LogContext {
   [key: string]: any;
 }
 
-export const logInfo = (message: string, context?: Record<string, any>) => {
-  logger.info(context || {}, message);
-};
+export function logInfo(message: string, data?: any) {
+  console.log(`[INFO] ${message}`, data || '');
+}
 
-export const logError = (error: Error, context?: Record<string, any>) => {
-  if (error instanceof Error) {
-    logger.error(
-      {
-        ...context,
-        error: {
-          message: error.message,
-          stack: error.stack,
-          name: error.name,
-        },
-      },
-      error.message
-    );
-  } else {
-    logger.error(context || {}, String(error));
+export function logError(message: string, data?: any) {
+  console.error(`[ERROR] ${message}`, data || '');
+}
+
+export function logWarning(message: string, data?: any) {
+  console.warn(`[WARN] ${message}`, data || '');
+}
+
+export function logDebug(message: string, data?: any) {
+  if (process.env.NODE_ENV === 'development') {
+    console.debug(`[DEBUG] ${message}`, data || '');
   }
-};
-
-export const logWarning = (message: string, context?: Record<string, any>) => {
-  logger.warn(context || {}, message);
-};
-
-export const logDebug = (message: string, context?: Record<string, any>) => {
-  logger.debug(context || {}, message);
-};
+}
 
 export function logRequest(request: Request, duration: number, context: LogContext = {}) {
   const url = new URL(request.url);

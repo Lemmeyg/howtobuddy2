@@ -14,12 +14,17 @@ interface Document {
   title: string
   content: string
   user_id: string
+  status: 'pending' | 'processing' | 'completed' | 'error'
+  error_message?: string
+  transcript?: string
+  summary?: string
 }
 
 export default function DocumentPage({ params }: { params: { id: string } }) {
   const [document, setDocument] = useState<Document | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [processing, setProcessing] = useState(false)
   const router = useRouter()
   const { toast } = useToast()
   const supabase = createClientComponentClient()
@@ -50,6 +55,11 @@ export default function DocumentPage({ params }: { params: { id: string } }) {
       }
 
       setDocument(data)
+
+      // If document is pending, start processing
+      if (data.status === 'pending') {
+        startProcessing()
+      }
     } catch (error) {
       toast({
         title: 'Error',
@@ -59,6 +69,49 @@ export default function DocumentPage({ params }: { params: { id: string } }) {
       router.push('/dashboard')
     } finally {
       setLoading(false)
+    }
+  }
+
+  const startProcessing = async () => {
+    try {
+      setProcessing(true)
+      const response = await fetch(`/api/documents/${params.id}/process`, {
+        method: 'POST',
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to start processing')
+      }
+
+      // Poll for status updates
+      const pollInterval = setInterval(async () => {
+        const { data, error } = await supabase
+          .from('documents')
+          .select('*')
+          .eq('id', params.id)
+          .single()
+
+        if (error) {
+          clearInterval(pollInterval)
+          throw error
+        }
+
+        setDocument(data)
+
+        if (data.status === 'completed' || data.status === 'error') {
+          clearInterval(pollInterval)
+          setProcessing(false)
+        }
+      }, 5000) // Poll every 5 seconds
+
+      return () => clearInterval(pollInterval)
+    } catch (error) {
+      toast({
+        title: 'Error',
+        description: 'Failed to process document',
+        variant: 'destructive',
+      })
+      setProcessing(false)
     }
   }
 
@@ -116,6 +169,28 @@ export default function DocumentPage({ params }: { params: { id: string } }) {
 
   if (!document) {
     return null
+  }
+
+  if (document.status === 'error') {
+    return (
+      <div className="container mx-auto py-8">
+        <div className="rounded-lg bg-destructive/10 p-4 text-destructive">
+          <h2 className="text-xl font-semibold">Error Processing Document</h2>
+          <p className="mt-2">{document.error_message || 'An unknown error occurred'}</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (document.status === 'processing' || processing) {
+    return (
+      <div className="container mx-auto py-8">
+        <div className="flex flex-col items-center justify-center space-y-4">
+          <Loader2 className="h-8 w-8 animate-spin" />
+          <p>Processing document...</p>
+        </div>
+      </div>
+    )
   }
 
   return (
